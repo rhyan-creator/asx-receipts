@@ -159,7 +159,8 @@ def _find_receipts(page) -> tuple[float, str] | None:
         v = _to_number(nums[0])
         if v is None:
             continue
-        return abs(v), text
+        prior = _to_number(nums[1]) if len(nums) > 1 else None
+        return abs(v), text, (abs(prior) if prior is not None else None)
     return None
 
 
@@ -279,7 +280,7 @@ def _parse_quarterly(doc, released: str) -> dict | None:
         hit = _find_receipts(page)
         if not hit:
             continue
-        value, label = hit
+        value, label, _ = hit  # 4C second column is year-to-date, not a comparative
         # header (quarter end, units) can be on this page or the first appendix page
         context = text + "\n" + "\n".join(doc[q].get_text() for q in range(max(0, p - 2), p))
         end = _period_end_from_text(context, r"quarter\s+ended|quarter\s+ending|for\s+the\s+quarter\s+ended")
@@ -321,7 +322,7 @@ def _parse_report(doc, kind: str, released: str, title: str | None = None) -> di
         hit = _find_receipts(page)
         if not hit:
             continue
-        value, label = hit
+        value, label, prior = hit
         text = page.get_text()
         context = text + "\n" + (doc[p - 1].get_text() if p > 0 else "")
         mult = _unit_multiplier(text)
@@ -337,6 +338,7 @@ def _parse_report(doc, kind: str, released: str, title: str | None = None) -> di
             "period_end": _snap_to_month_end(end).isoformat(),
             "months": months,
             "value": value * mult,
+            "prior": prior * mult if prior is not None else None,
             "currency": _currency(text[:3000] + context[:3000]),
             "label": label,
             "page": p + 1,

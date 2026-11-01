@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "state"
 SITE = ROOT / "docs" / "data"
 YEARS = 10
-FIN_V = 2  # bump to make the robot re-read reports after a parser change
+FIN_V = 4  # bump to make the robot re-read reports after a parser change
 FLOW = ["revenue", "gross", "ebitda", "ebit", "npat", "da"]
 STOCK = ["cash", "debt", "leases", "equity", "shares", "shares_wa"]
 COMPANY_CSV = "https://www.asx.com.au/asx/research/ASXListedCompanies.csv"
@@ -92,10 +92,11 @@ def _work(doc: dict) -> tuple[str, dict, dict | None, dict | None, str]:
     except Exception as e:  # noqa: BLE001
         return doc["ids_id"], doc, None, None, f"{type(e).__name__}: {str(e)[:150]}"
     point = fin = None
+    fin_err = ""
     try:
         point = parse.parse_pdf(pdf, doc["kind"], doc["released"], doc["title"])
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        fin_err = f"receipts reader error: {type(e).__name__}: {str(e)[:80]}"
     try:
         if doc["kind"] == "q":
             c = financials.quarterly_cash(pdf)
@@ -105,9 +106,10 @@ def _work(doc: dict) -> tuple[str, dict, dict | None, dict | None, str]:
                        "metrics": {"cash": [c, None]}, "pages": {}}
         else:
             fin = financials.parse_report(pdf, doc["kind"], doc["released"], doc["title"])
-    except Exception:  # noqa: BLE001
-        pass
-    return doc["ids_id"], doc, point, fin, ""
+    except Exception as e:  # noqa: BLE001
+        # never fail silently: record why, and leave the filing marked for another try next run
+        fin_err = f"financials reader error: {type(e).__name__}: {str(e)[:80]}"
+    return doc["ids_id"], doc, point, fin, fin_err and ("READER:" + fin_err)
 
 
 def _store_fin(s: dict, ids: str, doc: dict, fin: dict) -> int:
@@ -152,7 +154,7 @@ def refresh_ticker(t: str, workers: int = 4, use_yahoo: bool = True, log=print) 
             log(f"  {t} list {y}: {e}")
     todo = [{"ids_id": i, "released": d["r"], "title": d["t"], "kind": d["k"]}
             for i, d in s["docs"].items()
-            if d["s"] == "pending" or (d["s"] == "error" and d.get("tries", 0) < 3)
+            if d["s"] == "pending" or (d["s"] == "error" and d.get("tries", 0) < 5)
             or (d["s"] in ("parsed", "no_data") and d.get("fv", 0) < FIN_V)]
     todo = [d for d in todo if d["released"] >= f"{first}-01-01"]
     if todo:
@@ -160,22 +162,31 @@ def refresh_ticker(t: str, workers: int = 4, use_yahoo: bool = True, log=print) 
             for f in as_completed([ex.submit(_work, d) for d in todo]):
                 ids, doc, point, fin, err = f.result()
                 rec = s["docs"][ids]
+                reader_err = ""
+                if err.startswith("READER:"):
+                    reader_err, err = err[7:], ""
                 if err:
                     rec["s"], rec["n"], rec["tries"] = "error", err, rec.get("tries", 0) + 1
                     continue
-                rec["fv"] = FIN_V
+                rec["ftries"] = rec.get("ftries", 0) + (1 if reader_err else 0)
+                if not reader_err or rec["ftries"] >= 3:
+                    rec["fv"] = FIN_V  # done (or given up after 3 reader errors, which stay listed)
+                rec["err"] = reader_err
                 nfin = _store_fin(s, ids, doc, fin) if fin else 0
                 rec["f"] = nfin
+                rec["miss"] = (fin or {}).get("missing", []) if doc["kind"] != "q" else []
                 if point is None:
                     rec["s"] = "parsed" if nfin else "no_data"
                     rec["n"] = f"no receipts line; {nfin} financial figures" if nfin else "nothing found"
                 else:
                     rec["s"], rec["n"] = "parsed", f"p{point['page']}: {point['label'][:90]}" + (f" · {nfin} financial figures" if nfin else "")
                     s["points"] = [p for p in s["points"] if p.get("ids_id") != ids]
+                    pe = pd.Period(point["period_end"][:7], "M") - 12
                     s["points"].append({"period_end": point["period_end"], "months": point["months"],
                                         "value": point["value"], "currency": point["currency"],
                                         "source": "asx", "ids_id": ids, "title": doc["title"],
-                                        "released": doc["released"]})
+                                        "released": doc["released"], "prior": point.get("prior"),
+                                        "prior_end": pe.end_time.strftime("%Y-%m-%d") if point["months"] in (6, 12) else None})
     if use_yahoo:  # backstop for recent years
         try:
             ypts = yahoo.fetch(t)
@@ -220,14 +231,34 @@ def _rows_out(df: pd.DataFrame) -> list[dict]:
     return rows
 
 
+def with_comparatives(pts: list[dict], stock: bool = False) -> list[dict]:
+    """Fill a period that has no figure of its own (its report couldn't be read, or it predates the
+    first report we have) from the prior-period column of the next report."""
+    have = {(p.get("metric", "receipts"), p["period_end"][:7], p["months"]) for p in pts}
+    extra = []
+    for p in pts:
+        if p.get("prior") is None or not p.get("prior_end") or p.get("source") == "import":
+            continue
+        if not stock and p["months"] not in (6, 12):
+            continue
+        key = (p.get("metric", "receipts"), p["prior_end"][:7], p["months"])
+        if key in have:
+            continue
+        have.add(key)
+        extra.append({**p, "period_end": p["prior_end"], "value": p["prior"], "prior": None, "prior_end": None,
+                      "basis": "from next report's comparative", "check": None,
+                      "title": f"{p.get('title') or 'later report'} (prior-period column)"})
+    return pts + extra
+
+
 def _checks(fin: list[dict]) -> None:
     """Mark each figure 'verified' if a later report's comparative agrees with it (within 1%)."""
     comps: dict[tuple, list[float]] = {}
     for p in fin:
         if p.get("prior") is not None and p.get("prior_end"):
-            comps.setdefault((p["metric"], p["prior_end"][:7], p["months"]), []).append(p["prior"])
+            comps.setdefault((p.get("metric", "receipts"), p["prior_end"][:7], p["months"]), []).append(p["prior"])
     for p in fin:
-        c = comps.get((p["metric"], p["period_end"][:7], p["months"]))
+        c = comps.get((p.get("metric", "receipts"), p["period_end"][:7], p["months"]))
         if not c:
             p["check"] = None
             continue
@@ -251,7 +282,7 @@ def build_fin(s: dict, overrides: list[dict]) -> tuple[dict, dict]:
     ov = [o for o in overrides if o.get("metric") not in (None, "receipts")]
     flows, stocks = {}, {}
     for metric in FLOW:
-        pts = [p for p in fin if p["metric"] == metric] + [o for o in ov if o["metric"] == metric]
+        pts = with_comparatives([p for p in fin if p["metric"] == metric]) + [o for o in ov if o["metric"] == metric]
         if not pts:
             continue
         v = series.build(pd.DataFrame(pts))
@@ -261,10 +292,11 @@ def build_fin(s: dict, overrides: list[dict]) -> tuple[dict, dict]:
             flows[metric][freq] = _rows_out(series.add_growth(df)) if not df.empty else []
     rank = {"import": 0, "asx": 1, "asx4c": 2}
     for metric in STOCK:
-        pts = [p for p in fin if p["metric"] == metric] + [o for o in ov if o["metric"] == metric]
+        pts = with_comparatives([p for p in fin if p["metric"] == metric], stock=True) + [o for o in ov if o["metric"] == metric]
         if not pts:
             continue
-        pts.sort(key=lambda p: (p["period_end"][:7], rank.get(p.get("source"), 3), p.get("released") or "9999"))
+        pts.sort(key=lambda p: (p["period_end"][:7], rank.get(p.get("source"), 3) + (0.5 if p.get("basis") else 0),
+                                p.get("released") or "9999"))
         seen, rows = set(), []
         for p in pts:
             key = p["period_end"][:7]
@@ -277,15 +309,34 @@ def build_fin(s: dict, overrides: list[dict]) -> tuple[dict, dict]:
             m = pd.Period(key, "M")
             rows.append({"end": key, "label": m.strftime("%b-%y"), "v": _clean_num(val),
                          "doc": p.get("ids_id"), "src": p.get("title") or "", "rel": p.get("released"),
-                         "chk": p.get("check"), "basis": "reported" if p.get("source") != "import" else "override",
+                         "chk": p.get("check"), "basis": "override" if p.get("source") == "import" else (p.get("basis") or "reported"),
                          "q": p.get("source") == "asx4c"})
+        if metric in ("shares", "shares_wa"):
+            rows = _drop_share_outliers(rows, (s.get("prices") or {}).get("shares_now"))
         stocks[metric] = rows
     return flows, stocks
 
 
+def _drop_share_outliers(rows: list[dict], shares_now: float | None) -> list[dict]:
+    """A share count far out of line is a unit misread (e.g. ×1,000). Splits and consolidations are
+    already adjusted for, so real counts never jump like that. Today's count from the market data is the
+    anchor when we have it (several misreads in a row can't outvote it); otherwise the median."""
+    vals = sorted(r["v"] for r in rows if r.get("v"))
+    if shares_now:
+        lo, hi = shares_now / 50, shares_now * 3
+    elif len(vals) >= 3:
+        med = vals[len(vals) // 2]
+        lo, hi = med * 0.2, med * 5
+    else:
+        return rows
+    return [r for r in rows if lo <= (r.get("v") or 0) <= hi]
+
+
 def build_site_json(s: dict, meta: dict, overrides: list[dict]) -> dict:
     receipt_ov = [o for o in overrides if o.get("metric", "receipts") == "receipts"]
-    pts = pd.DataFrame([p for p in s["points"] if p.get("metric", "receipts") == "receipts"] + receipt_ov)
+    rpts = [dict(p) for p in s["points"] if p.get("metric", "receipts") == "receipts"]
+    _checks(rpts)
+    pts = pd.DataFrame(with_comparatives(rpts) + receipt_ov)
     for col in ("ids_id", "title", "released", "currency", "source"):
         if col not in pts:
             pts[col] = None
@@ -312,7 +363,8 @@ def build_site_json(s: dict, meta: dict, overrides: list[dict]) -> dict:
     if not out["currencies"]:
         out["currencies"] = sorted({p.get("currency") or "AUD" for p in s.get("fin", [])}) or ["AUD"]
     out["docs"] = sorted(
-        [{"id": i, "date": d["r"], "title": d["t"], "status": d["s"], "note": d.get("n", ""), "fin": d.get("f", 0)}
+        [{"id": i, "date": d["r"], "title": d["t"], "status": d["s"], "note": d.get("n", ""), "fin": d.get("f", 0),
+          "miss": d.get("miss", []), "err": d.get("err", "")}
          for i, d in s["docs"].items()],
         key=lambda d: d["date"], reverse=True)
     return out
@@ -354,6 +406,8 @@ def main() -> None:
     ap.add_argument("--commit-every", type=float, default=20, help="minutes between progress commits")
     ap.add_argument("--no-git", action="store_true")
     ap.add_argument("--offline-companies", help="use this CSV/JSON list instead of downloading (testing)")
+    ap.add_argument("--weekly-after-backfill", action="store_true",
+                    help="scheduled runs: work daily until every ASX company is loaded, then only on Saturdays")
     a = ap.parse_args()
     t0, last_commit = time.time(), time.time()
     budget = a.budget_min * 60
@@ -383,6 +437,20 @@ def main() -> None:
     if idx.exists():
         status = {r[0]: r[3] for r in json.loads(idx.read_text()).get("companies", [])}
 
+    # daily until the whole ASX has been loaded once, then weekly (Saturday, Melbourne time)
+    if a.weekly_after_backfill and not a.tickers:
+        queued = [c["t"] for c in companies if status.get(c["t"], "queued") == "queued"]
+        try:
+            from zoneinfo import ZoneInfo
+            mel_day = datetime.now(ZoneInfo("Australia/Melbourne")).weekday()
+        except Exception:  # noqa: BLE001
+            mel_day = datetime.now(timezone.utc).weekday()
+        if not queued and mel_day != 5:
+            print("History is fully loaded, so scheduled runs are weekly now (Saturdays). Nothing to do today.")
+            return
+        print(f"{len(queued)} companies still to load; running daily until done." if queued
+              else "Weekly update (Saturday).")
+
     weekly = date.today().weekday() == 0  # Yahoo re-check for loaded tickers once a week
 
     def do(t: str, why: str) -> None:
@@ -392,6 +460,7 @@ def main() -> None:
             print(f"[{(time.time() - t0) / 60:5.1f}m] {why} {t}: {status[t]}, "
                   f"{sum(1 for d in s['docs'].values() if d['s'] == 'parsed')} filings parsed", flush=True)
         except Exception as e:  # noqa: BLE001
+            status[t] = "error"  # so one broken ticker can't hold up the switch to weekly
             print(f"  {t} failed: {e}", flush=True)
 
     # 1. explicitly requested tickers

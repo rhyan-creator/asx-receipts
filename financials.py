@@ -108,37 +108,54 @@ def _find(rows, pat, excl=EXCL, start_only=True, all_matches=False):
     return hits
 
 
-def _revenue_section(rows) -> list[float] | None:
-    """Sum the lines under a bare 'Revenue' / 'Revenue and other income' heading, down to the first
-    expense line or total. Interest / finance income is left out."""
+REV_SKIP = re.compile(r"^other\s+(income|gains?|revenue)|gain\s+on|gains?\b|fair\s+value|interest|finance\s+income|"
+                      r"share\s+of|associate|joint\s+venture|dividend|grant|government|foreign\s+exchange|"
+                      r"insurance\s+recover|reversal|net\s+investment", re.I)
+REV_STOP = re.compile(r"^(expenses?|less\b|cost|employee|depreciation|amortisation|finance\s+costs|profit|loss|gross\s+profit|"
+                      r"raw\s+materials|changes\s+in|purchases|administration|marketing|occupancy|other\s+expenses|total\s+expenses)", re.I)
+
+
+def _revenue_block(rows):
+    """Revenue lines at the top of the income statement, summed (e.g. LGI: contracts + environmental
+    certificates). Other income, gains, interest and associates are left out. Returns (values, n_lines,
+    total_row_values_or_None)."""
     start = None
     for i, row in enumerate(rows):
         lab = _label_text(row).strip()
-        nums = [w for w in row if NUM.match(_norm(w[4])) and not re.search(r"[a-z]", w[4], re.I)]
-        if re.match(r"^(revenue|income|revenue\s+and\s+other\s+income|income\s+from\s+operations)$", lab, re.I) and not nums:
+        has_num = any(NUM.match(_norm(w[4])) and not re.search(r"[a-z]", w[4], re.I) for w in row)
+        if re.match(r"^(revenue|income|revenue\s+and\s+other\s+income|income\s+from\s+operations|revenues?\s+from\s+operations)$", lab, re.I) and not has_num:
+            start = i + 1
+            break
+        if (L["revenue"].match(lab) or L["revenue_total"].match(lab)) and has_num and not EXCL.search(lab):
             start = i
             break
     if start is None:
         return None
-    tot = [0.0, 0.0]
-    n = 0
-    for i in range(start + 1, min(start + 12, len(rows))):
+    tot, n = [0.0, 0.0], 0
+    for i in range(start, min(start + 14, len(rows))):
         lab = _label_text(rows[i]).strip()
         if not lab:
             continue
-        if re.match(r"^(expenses?|less|cost|total|profit|loss)", lab, re.I):
+        if L["revenue_total"].match(lab):
+            v = _values(rows, i)
+            if v:
+                return [abs(x) for x in v], n, v
+        if REV_STOP.match(lab):
             break
-        vals = _values(rows, i) if any(NUM.match(_norm(w[4])) for w in rows[i]) else []
+        has_num = any(NUM.match(_norm(w[4])) and not re.search(r"[a-z]", w[4], re.I) for w in rows[i])
+        if not has_num:
+            continue
+        vals = _values(rows, i)
         if not vals:
             continue
         if vals[0] < 0:
             break
-        if re.search(r"interest|finance\s+income", lab, re.I):
+        if REV_SKIP.search(lab) or re.match(r"^total", lab, re.I):
             continue
         for k in range(min(2, len(vals))):
             tot[k] += vals[k]
         n += 1
-    return tot if n >= 2 else None
+    return (tot, n, None) if n else None
 
 
 END_ROW = re.compile(r"(at|as\s+at|on\s+issue\s+at)\s+(the\s+)?(reporting\s+date|end\s+of|30\s+june|31\s+december|period[- ]end|year[- ]end|balance\s+date)|"
@@ -188,6 +205,21 @@ def _issued_shares(rows) -> list[float] | None:
     return None
 
 
+def _canon(lab: str) -> str:
+    """Profit-line label with brackets and profit/loss pairs normalised:
+    '(Loss)/profit before income tax' → 'profit before income tax', '(Loss) for the year' → 'loss for the year'."""
+    t = _norm(lab).lower()
+    t = re.sub(r"\(?\s*(profit|loss)\s*\)?\s*/\s*\(?\s*(profit|loss)\s*\)?", "profit", t)
+    t = t.replace("(", " ").replace(")", " ")
+    return re.sub(r"\s+", " ", t).strip()
+
+
+PBT_C = re.compile(r"\b(net\s+)?(profit|loss|earnings)\s+before\s+(income\s+)?tax")
+NPAT_C = re.compile(r"^(net\s+)?(profit|loss)\b(?!.*\bbefore\b)(?!.*per\s+share)(?!.*comprehensive)")
+SUMMARY_PAGE = re.compile(r"appendix\s+4[de]|results\s+for\s+announcement|up\s*/\s*\(?down\)?|change\s*%|%\s*change|"
+                          r"statutory\s+ebitda|underlying\s+ebitda", re.I)
+
+
 def _page_score(text: str, kind: str) -> int:
     t = text.lower()
     s = 0
@@ -203,18 +235,32 @@ def _page_score(text: str, kind: str) -> int:
         s += 1 if "cash" in t else 0
     if NOT_STATEMENT.search(t[:600]):
         s -= 4
+    if SUMMARY_PAGE.search(t):
+        s -= 5  # an Appendix 4E/4D results summary, not the statement itself
     return s
 
 
 def _best_pages(doc, kind: str, n: int = 2) -> list[int]:
+    """The statement page(s), plus the page after the best one (statements often run over a page break).
+    Falls back to a looser score when the heading isn't extractable text (e.g. drawn as an image)."""
     scored = []
     for p in range(doc.page_count):
         txt = doc[p].get_text()
-        sc = _page_score(txt, kind)
-        if sc >= 6:
-            scored.append((sc, p))
-    scored.sort(key=lambda x: (-x[0], x[1]))
-    return [p for _, p in scored[:n]]
+        scored.append((_page_score(txt, kind), p))
+    good = [x for x in scored if x[0] >= 6] or [x for x in scored if x[0] >= 4 and _structural(doc[x[1]].get_text(), kind)]
+    good.sort(key=lambda x: (-x[0], x[1]))
+    pages = [p for _, p in good[:n]]
+    if pages and pages[0] + 1 < doc.page_count and pages[0] + 1 not in pages:
+        pages.append(pages[0] + 1)
+    return pages
+
+
+def _structural(text: str, kind: str) -> bool:
+    t = text.lower()
+    if kind == "pl":
+        return bool(re.search(r"before\s+(income\s+)?tax", t)) and bool(re.search(r"income\s+tax", t)) and \
+            bool(re.search(r"revenue|sales|income", t))
+    return "total assets" in t and "total liabilities" in t
 
 
 def _mult(doc, p: int) -> float:
@@ -252,32 +298,34 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
     # -------- income statement
     pl_pages = _best_pages(doc, "pl")
     ctx_text = ""
+    pbt_seen = False  # kept across pages: profit before tax can sit at the bottom of one page, net profit on the next
     for p in pl_pages:
         rows = _rows(doc[p])
         mult = _mult(doc, p)
         ctx_text = ctx_text or doc[p].get_text()
+        # revenue: a 'Total revenue' line if there is one, otherwise every revenue line at the top of
+        # the statement added together (other income, gains and interest left out)
         tot = _find(rows, L["revenue_total"])
-        first = _find(rows, L["revenue"])
-        sec = _revenue_section(rows)
-        if not tot and sec and first and sec[0] > 1.25 * abs(first[0][1][0]):
-            # no total line, but the revenue section has several material lines (e.g. LGI's certificates income)
-            put("revenue", sec, mult, p, absolute=True)
-        tot_oi = _find(rows, re.compile(r"^total\s+(revenue|income)(\s+and\s+other\s+income)?\b", re.I), excl=re.compile(r"comprehensive|tax", re.I))
+        blk = _revenue_block(rows)
         if tot:
             put("revenue", tot[0][1], mult, p, absolute=True)
-        elif first and tot_oi and abs(first[0][1][0]) < 0.8 * abs(tot_oi[0][1][0]):
-            # e.g. LGI: 'revenue from contracts' is only part; certificates income sits on another line
-            put("revenue", tot_oi[0][1], mult, p, absolute=True)
-        elif first:
-            put("revenue", first[0][1], mult, p, absolute=True)
-        elif tot_oi:
-            put("revenue", tot_oi[0][1], mult, p, absolute=True)
+        elif blk:
+            put("revenue", blk[0], mult, p, absolute=True)
+        else:
+            tot_oi = _find(rows, re.compile(r"^total\s+(revenue|income)(\s+and\s+other\s+income)?\b", re.I),
+                           excl=re.compile(r"comprehensive|tax", re.I))
+            if tot_oi:
+                put("revenue", tot_oi[0][1], mult, p, absolute=True)
         h = _find(rows, re.compile(r"^gross\s+(profit|margin)\b", re.I), excl=re.compile(r"%|percent", re.I))
         if h:
             put("gross", h[0][1], mult, p)
-        h = _find(rows, L["pbt"], start_only=False, excl=re.compile(r"per\s+share|comprehensive|discontinued", re.I))
-        if h:
-            put("pbt", h[0][1], mult, p)
+        for i, row in enumerate(rows):
+            c = _canon(_label_text(row))
+            if PBT_C.search(c) and not re.search(r"per\s+share|comprehensive|discontinued", c):
+                v = _values(rows, i)
+                if v:
+                    put("pbt", v, mult, p)
+                    break
         h = _find(rows, L["net_fin"])
         if h:
             # stored as a cost (positive = expense). "Net finance costs (1,234)" → 1,234.
@@ -300,13 +348,14 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
                 tot = [sum(abs(v[k]) for _, v in parts if len(v) > k) for k in range(2)]
                 put("da", tot, mult, p, absolute=True)
         # NPAT: first profit-after-tax style line *below* PBT
-        pbt_seen = False
         for i, row in enumerate(rows):
             lab = _label_text(row).strip()
-            if L["pbt"].search(lab):
+            c = _canon(lab)
+            if PBT_C.search(c):
                 pbt_seen = True
                 continue
-            if pbt_seen and L["npat"].match(lab) and not re.search(r"before|per\s+share|comprehensive", lab, re.I):
+            if pbt_seen and "npat" not in metrics and NPAT_C.match(c) and \
+                    not re.search(r"discontinued\s+operations\s*$", c):
                 v = _values(rows, i)
                 if v:
                     put("npat", v, mult, p)
@@ -337,7 +386,7 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
                 break
 
     # -------- balance sheet
-    for p in _best_pages(doc, "bs"):
+    for p in _best_pages(doc, "bs", n=3):
         rows = _rows(doc[p])
         mult = _mult(doc, p)
         h = _find(rows, L["cash"])
@@ -368,15 +417,25 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
         if not re.search(r"weighted\s+average\s+number", t, re.I):
             continue
         rows = _rows(doc[p])
-        h = _find(rows, L["wa_shares"], start_only=False, excl=re.compile(r"diluted(?!.*basic)", re.I))
-        if h:
-            wa = h[0][1]
-            u = _norm(t).lower()
-            if re.search(r"'000|\(000\)|thousands|000s", u):
-                wa = [x * 1000 for x in wa]
-            elif re.search(r"millions|\(m\)|'m\b", u):
-                wa = [x * 1e6 for x in wa]
+        for i, row in enumerate(rows):
+            lab = _label_text(row)
+            if not L["wa_shares"].search(lab) or re.search(r"diluted(?!.*basic)", lab, re.I):
+                continue
+            vals = _values(rows, i)
+            if not vals:
+                continue
+            # units only from this line and the few header rows right above it (a page-wide "$'000"
+            # usually belongs to the earnings figures, not the share count)
+            near = _norm(" ".join(" ".join(w[4] for w in r) for r in rows[max(0, i - 3):i + 1])).lower()
+            if re.search(r"(\bno\.|\bnumber\b|\bshares\b)[^\n]{0,25}('000|\(000\)|000s|thousands)|('000|thousands)[^\n]{0,15}\bshares\b|"
+                         r"weighted[^\n]*('000|\(000\)|thousands)", near):
+                vals = [x * 1000 for x in vals]
+            elif re.search(r"(\bno\.|\bnumber\b|\bshares\b)[^\n]{0,25}(millions|\(m\))", near):
+                vals = [x * 1e6 for x in vals]
+            wa = vals
             pages["wa_shares"] = p + 1
+            break
+        if wa:
             break
     issued = None
     for p in range(doc.page_count):
@@ -444,7 +503,8 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
     text0 = (doc[pl_pages[0]].get_text() if pl_pages else "") + "\n" + \
         "\n".join(doc[q].get_text() for q in range(min(4, doc.page_count)))
     end = resolve_period_end(_period_end_from_text(text0, kw), kind, released, title)
-    out = {"period_end": _snap_to_month_end(end).isoformat(), "months": months,
+    missing = [m for m in ("revenue", "npat", "ebit", "cash", "shares") if m not in metrics]
+    out = {"missing": missing, "period_end": _snap_to_month_end(end).isoformat(), "months": months,
            "currency": _currency(ctx_text[:3000]),
            "metrics": {k: [None if x is None else float(x) for x in v[:2]] for k, v in metrics.items()},
            "pages": pages}

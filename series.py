@@ -10,7 +10,7 @@ from __future__ import annotations
 import pandas as pd
 
 PRIORITY = {"import": 0, "asx": 1, "yahoo": 2}
-COLS = ["period_end", "months", "value", "currency", "source", "ids_id", "title", "released", "check"]
+COLS = ["period_end", "months", "value", "currency", "source", "ids_id", "title", "released", "check", "basis"]
 
 
 def _clean(df: pd.DataFrame) -> pd.DataFrame:
@@ -20,7 +20,9 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     for c in COLS:
         if c not in d:
             d[c] = None
-    d["rank"] = d["source"].map(lambda s: PRIORITY.get(str(s).split(":")[0], 3))
+    d["rank"] = d["source"].map(lambda s: PRIORITY.get(str(s).split(":")[0], 3)).astype(float)
+    # a figure from its own report beats the same figure taken from the next report's comparative column
+    d.loc[d["basis"].astype(str).str.startswith("from next"), "rank"] += 0.5
     # among same-priority duplicates (e.g. 4E and Annual Report) keep the earliest release
     d["_rel"] = d["released"].fillna("9999")
     d = d.sort_values(["rank", "_rel"]).drop_duplicates(["period_end", "months"], keep="first")
@@ -41,7 +43,8 @@ def fiscal_year_end_month(d: pd.DataFrame) -> int:
 
 
 def _row(r, **kw):
-    base = dict(value=r.value, currency=r.currency, basis="reported", source=r.source,
+    b = getattr(r, "basis", None)
+    base = dict(value=r.value, currency=r.currency, basis=b if isinstance(b, str) and b else "reported", source=r.source,
                 ids_id=r.ids_id, title=r.title, released=r.released, check=r.check)
     base.update(kw)
     return base

@@ -40,7 +40,7 @@ def _get(url: str, **kw) -> requests.Response:
         _last_call[0] = time.time()
     for attempt in range(3):
         try:
-            r = _session().get(url, timeout=60, **kw)
+            r = _session().get(url, timeout=(20, 180), **kw)
             if r.status_code == 200:
                 return r
             if r.status_code in (429, 500, 502, 503, 504):
