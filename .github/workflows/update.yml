@@ -1,8 +1,6 @@
 name: Update data
 
 on:
-  schedule:
-    - cron: "17 */3 * * *"
   workflow_dispatch:
     inputs:
       tickers:
@@ -39,9 +37,7 @@ jobs:
       - name: Arrange files
         run: |
           mkdir -p scraper docs/data state
-          for f in __init__.py asx.py parse.py series.py yahoo.py update.py; do
-            if [ -f "$f" ]; then cp "$f" scraper/; fi
-          done
+          if ls *.py >/dev/null 2>&1; then cp *.py scraper/; fi
           if [ -f index.html ]; then cp index.html docs/; fi
 
       - name: Fetch new filings and load history
