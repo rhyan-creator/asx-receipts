@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASX Receipts</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2' y='8' width='3' height='6' rx='1' fill='%232a78d6'/><rect x='6.5' y='5' width='3' height='9' rx='1' fill='%232a78d6'/><rect x='11' y='2' width='3' height='12' rx='1' fill='%232a78d6'/></svg>">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f6f4; --surface: #fcfcfb; --border: #e4e3df;
+  --text: #0b0b0b; --text-2: #52514e; --muted: #8a8984;
+  --accent: #2a78d6; --accent-soft: #e8f1fc;
+  --pos: #1baf7a; --neg: #e34948; --warn-bg: #fff6e0; --warn: #8a5a00;
+  --grid: rgba(0,0,0,.07);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #111110; --surface: #1a1a19; --border: #2e2e2b;
+    --text: #f0efec; --text-2: #c3c2b7; --muted: #8a8984;
+    --accent: #3987e5; --accent-soft: #1c2b3f;
+    --pos: #199e70; --neg: #e66767; --warn-bg: #2e2412; --warn: #e8b85a;
+    --grid: rgba(255,255,255,.08);
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 28px 16px 60px; }
+header { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+.sub { color: var(--muted); font-size: 13px; }
+.search { position: relative; margin: 20px 0 8px; }
+.search input { width: 100%; font: inherit; font-size: 17px; padding: 14px 16px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); outline: none; }
+.search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.suggest { position: absolute; z-index: 10; left: 0; right: 0; top: 100%; margin-top: 4px; list-style: none; padding: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.12); display: none; }
+.suggest li { padding: 8px 12px; border-radius: 8px; cursor: pointer; display: flex; gap: 12px; align-items: baseline; }
+.suggest li.on, .suggest li:hover { background: var(--accent-soft); }
+.suggest b { min-width: 48px; }
+.suggest span { color: var(--text-2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest i { font-style: normal; font-size: 12px; color: var(--muted); }
+.title { margin: 28px 0 4px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.title h2 { margin: 0; font-size: 26px; letter-spacing: -.02em; }
+.title .name { color: var(--text-2); }
+.controls { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+.seg button { font: inherit; font-size: 14px; border: 0; background: none; color: var(--text-2); padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+.seg button.on { background: var(--accent); color: #fff; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 8px 0 16px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.tile .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.tile .v { font-size: 24px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tile .d { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.d.up { color: var(--pos); } .d.down { color: var(--neg); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+.card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 500; color: var(--text-2); }
+.chart { position: relative; height: 380px; }
+.chart.small { height: 180px; }
+.note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.banner { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 12px 14px; font-size: 14px; margin: 12px 0; }
+.banner a { color: inherit; font-weight: 600; }
+.tabs { display: flex; gap: 4px; margin: 20px 0 8px; }
+.tabs button { font: inherit; font-size: 14px; border: 0; background: none; color: var(--text-2); padding: 6px 10px; border-bottom: 2px solid transparent; cursor: pointer; }
+.tabs button.on { color: var(--text); border-color: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
+td.r, th.r { text-align: right; }
+.scroll { max-height: 420px; overflow: auto; }
+a { color: var(--accent); }
+.btn { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); cursor: pointer; margin-top: 10px; }
+.empty { text-align: center; color: var(--text-2); padding: 60px 16px; }
+.empty .chips { margin-top: 14px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.chip { font: inherit; font-size: 13px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.hidden { display: none !important; }
+@media (max-width: 720px) {
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+  .chart { height: 300px; }
+  .tile .v { font-size: 20px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ASX Receipts</h1>
+    <div class="sub" id="coverage">Loading company list…</div>
+  </header>
+
+  <div class="search">
+    <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Type a ticker or company name, e.g. LGI">
+    <ul class="suggest" id="suggest"></ul>
+  </div>
+
+  <div id="home" class="empty">
+    Cash receipts from customers for ASX companies, from each quarterly 4C/5B, half-year and annual report.
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <section id="view" class="hidden">
+    <div class="title"><h2 id="tk"></h2><span class="name" id="nm"></span><span class="pill" id="sector"></span></div>
+    <div id="banner"></div>
+    <div id="body">
+      <div class="controls">
+        <div class="seg" id="freq">
+          <button data-v="Quarterly">Quarterly</button><button data-v="Half-yearly">Half-yearly</button>
+          <button data-v="Annual">Annual</button><button data-v="TTM">TTM</button>
+        </div>
+        <div class="seg" id="range">
+          <button data-v="5">5y</button><button data-v="10">10y</button><button data-v="99">All</button>
+        </div>
+      </div>
+      <div class="tiles" id="tiles"></div>
+      <div class="card"><h3 id="chartTitle">Receipts from customers</h3><div class="chart"><canvas id="main"></canvas></div>
+        <div class="note" id="mainNote"></div></div>
+      <div class="card" id="growthCard"><h3>Growth vs the same period a year earlier</h3>
+        <div class="chart small"><canvas id="growth"></canvas></div></div>
+      <div class="tabs" id="tabs"><button data-v="data" class="on">Data</button><button data-v="docs">Source filings</button></div>
+      <div class="card" id="tab-data"><div class="scroll"><table id="dataTable"></table></div>
+        <button class="btn" id="csv">Download CSV</button></div>
+      <div class="card hidden" id="tab-docs"><div class="scroll"><table id="docTable"></table></div></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const state = { companies: [], byCode: {}, data: null, freq: "Quarterly", range: 10, charts: {} };
+const SYM = { AUD: "A$", USD: "US$", NZD: "NZ$", CAD: "C$", GBP: "£" };
+
+// Link to the GitHub Actions page for "load now" (works when hosted at user.github.io/repo/)
+function actionsUrl() {
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/);
+  const repo = location.pathname.split("/").filter(Boolean)[0];
+  return m && repo ? `https://github.com/${m[1]}/${repo}/actions/workflows/update.yml` : null;
+}
+
+function money(v, ccy = "AUD") {
+  if (v == null) return "–";
+  const s = SYM[ccy] || ccy + " ", a = Math.abs(v);
+  if (a >= 1e9) return s + (v / 1e9).toFixed(2) + "b";
+  if (a >= 1e6) return s + (v / 1e6).toFixed(1) + "m";
+  if (a >= 1e3) return s + (v / 1e3).toFixed(0) + "k";
+  return s + v.toFixed(0);
+}
+const pct = v => v == null ? "–" : (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const asxLink = id => `https://www.asx.com.au/asx/v2/statistics/displayAnnouncement.do?display=pdf&idsId=${id}`;
+
+// ---------------------------------------------------------- company list + search
+async function init() {
+  try {
+    const r = await fetch("data/index.json", { cache: "no-cache" });
+    const idx = await r.json();
+    state.companies = idx.companies.map(([t, n, s, st]) => ({ t, n, s, st }));
+    state.companies.forEach(c => state.byCode[c.t] = c);
+    const ready = state.companies.filter(c => c.st === "ready").length;
+    const done = state.companies.filter(c => c.st !== "queued").length;
+    $("#coverage").textContent = `${ready.toLocaleString()} companies with data · ` +
+      (done < state.companies.length ? `history ${Math.round(100 * done / state.companies.length)}% loaded · ` : "") +
+      `updated ${idx.updated}`;
+    showChips();
+  } catch (e) {
+    $("#coverage").textContent = "No data yet: the first update hasn't finished.";
+  }
+  if (location.hash.length > 1) load(location.hash.slice(1));
+}
+
+function showChips() {
+  let recent = [];
+  try { recent = JSON.parse(localStorage.getItem("recent") || "[]"); } catch (e) {}
+  $("#chips").innerHTML = recent.map(t => `<button class="chip" data-t="${esc(t)}">${esc(t)}</button>`).join("");
+  $("#chips").querySelectorAll(".chip").forEach(b => b.onclick = () => load(b.dataset.t));
+}
+
+let sel = -1;
+function suggest() {
+  const q = $("#q").value.trim().toUpperCase();
+  const box = $("#suggest");
+  if (!q) { box.style.display = "none"; return; }
+  const starts = state.companies.filter(c => c.t.startsWith(q));
+  const names = state.companies.filter(c => !c.t.startsWith(q) && c.n.toUpperCase().includes(q));
+  const list = [...starts.sort((a, b) => a.t.length - b.t.length), ...names].slice(0, 8);
+  sel = list.length ? 0 : -1;
+  box.innerHTML = list.map((c, i) => `<li data-t="${c.t}" class="${i === 0 ? "on" : ""}"><b>${c.t}</b><span>${esc(c.n)}</span>` +
+    `<i>${c.st === "ready" ? "" : c.st === "none" ? "no receipts line" : "loading soon"}</i></li>`).join("");
+  box.style.display = list.length ? "block" : "none";
+  box.querySelectorAll("li").forEach(li => li.onmousedown = () => load(li.dataset.t));
+}
+$("#q").addEventListener("input", suggest);
+$("#q").addEventListener("keydown", e => {
+  const items = [...$("#suggest").querySelectorAll("li")];
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    items.forEach((li, i) => li.classList.toggle("on", i === sel));
+  } else if (e.key === "Enter") {
+    const t = items[sel] ? items[sel].dataset.t : $("#q").value.trim().toUpperCase();
+    if (t) load(t);
+  } else if (e.key === "Escape") $("#suggest").style.display = "none";
+});
+$("#q").addEventListener("blur", () => setTimeout(() => $("#suggest").style.display = "none", 150));
+
+// ---------------------------------------------------------- load a ticker
+async function load(t) {
+  t = t.toUpperCase().replace(/\.AX$/, "");
+  $("#q").value = ""; $("#suggest").style.display = "none";
+  history.replaceState(null, "", "#" + t);
+  const c = state.byCode[t];
+  $("#home").classList.add("hidden"); $("#view").classList.remove("hidden");
+  $("#tk").textContent = t; $("#nm").textContent = c ? c.n : "";
+  $("#sector").textContent = c && c.s && c.s !== "Not Applic" ? c.s : "";
+  $("#sector").classList.toggle("hidden", !(c && c.s && c.s !== "Not Applic"));
+  $("#banner").innerHTML = "";
+  let data = null;
+  try {
+    const r = await fetch(`data/${t}.json`, { cache: "no-cache" });
+    if (r.ok) data = await r.json();
+  } catch (e) {}
+  const hasData = data && Object.values(data.series || {}).some(s => s.length);
+  if (!hasData) {
+    $("#body").classList.add("hidden");
+    const a = actionsUrl();
+    let msg;
+    if (!c) msg = `<b>${esc(t)}</b> isn't on the current ASX company list. Check the ticker.`;
+    else if (!data || (c.st === "queued")) msg = `<b>${esc(t)}</b> hasn't been loaded yet. The updater works through the whole ASX ` +
+      `over the first few days.` + (a ? ` To load it now: <a href="${a}" target="_blank" rel="noopener">open the updater</a>, ` +
+      `click <b>Run workflow</b>, type <b>${esc(t)}</b> and press the green button. It's ready in about 5 minutes.` : "");
+    else msg = `No "receipts from customers" figures were found in ${esc(t)}'s filings. Banks and companies using the indirect ` +
+      `cash flow method don't report this line. If a figure is missing, you can add it in <b>overrides.csv</b> in the repository.`;
+    $("#banner").innerHTML = `<div class="banner">${msg}</div>`;
+    if (data && data.docs && data.docs.length) { $("#body").classList.remove("hidden"); hideCharts(); }
+    state.data = data; renderDocs();
+    return;
+  }
+  $("#body").classList.remove("hidden"); showCharts();
+  state.data = data;
+  try {
+    let recent = JSON.parse(localStorage.getItem("recent") || "[]").filter(x => x !== t);
+    localStorage.setItem("recent", JSON.stringify([t, ...recent].slice(0, 8)));
+  } catch (e) {}
+  if (!data.series[state.freq].length) state.freq = ["Quarterly", "Half-yearly", "Annual", "TTM"].find(f => data.series[f].length);
+  if (data.currencies.length > 1) $("#banner").innerHTML = `<div class="banner">This company has reported in more than one currency ` +
+    `(${data.currencies.join(", ")}). Figures are shown as reported, without FX conversion.</div>`;
+  render();
+}
+function hideCharts() { ["#tiles", ".controls", ".card:has(#main)", "#growthCard", "#tab-data", "#tabs button[data-v='data']"].forEach(s => { const e = $(s); if (e) e.classList.add("hidden"); }); switchTab("docs"); }
+function showCharts() { ["#tiles", ".controls", ".card:has(#main)", "#growthCard", "#tabs button[data-v='data']"].forEach(s => { const e = $(s); if (e) e.classList.remove("hidden"); }); switchTab("data"); }
+
+// ---------------------------------------------------------- render
+function rows() {
+  const all = state.data.series[state.freq] || [];
+  if (state.range >= 99 || !all.length) return all;
+  const last = all[all.length - 1].end;
+  const [y, m] = last.split("-").map(Number);
+  const cut = `${y - state.range}-${String(m).padStart(2, "0")}`;
+  return all.filter(r => r.end > cut);
+}
+
+function render() {
+  const d = state.data, ccy = d.currencies.length === 1 ? d.currencies[0] : "AUD";
+  document.querySelectorAll("#freq button").forEach(b => {
+    b.classList.toggle("on", b.dataset.v === state.freq);
+    b.disabled = !d.series[b.dataset.v].length; b.style.opacity = b.disabled ? .4 : 1;
+  });
+  document.querySelectorAll("#range button").forEach(b => b.classList.toggle("on", +b.dataset.v === state.range));
+  const rs = rows();
+  // tiles
+  const last = rs[rs.length - 1], ttm = d.series.TTM, tl = ttm[ttm.length - 1];
+  const tile = (k, v, dl, cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="d ${cls}">${dl || "&nbsp;"}</div></div>`;
+  const dir = v => v == null ? "" : v >= 0 ? "up" : "down";
+  const parsed = d.docs.filter(x => x.status === "parsed").length;
+  $("#tiles").innerHTML =
+    tile(`Latest · ${last.label}`, money(last.v, ccy), last.yoy != null ? pct(last.yoy) + " YoY" : "", dir(last.yoy)) +
+    (tl ? tile(`Trailing 12m · ${tl.label}`, money(tl.v, ccy), tl.yoy != null ? pct(tl.yoy) + " YoY" : "", dir(tl.yoy)) : tile("Trailing 12m", "–")) +
+    tile(d.cagr ? `Annual CAGR · ${d.cagr.span}` : "Annual CAGR", d.cagr ? pct(d.cagr.rate).replace("+", "") : "–", d.cagr && d.cagr.span ? "compound, per year" : "") +
+    tile("Filings read", parsed, `updated ${d.updated || "–"}`);
+  // charts
+  const max = Math.max(...rs.map(r => Math.abs(r.v || 0)));
+  const div = max >= 5e6 ? 1e6 : 1e3, unit = (SYM[ccy] || ccy + " ") + (div === 1e6 ? "m" : "k");
+  $("#chartTitle").textContent = `Receipts from customers · ${state.freq === "TTM" ? "trailing 12 months" : state.freq.toLowerCase()} · ${unit}`;
+  const derived = rs.filter(r => r.basis !== "reported").length;
+  $("#mainNote").textContent = (derived ? `${derived} of ${rs.length} figures are derived (e.g. H2 = FY − H1); hover for details. ` : "") +
+    "Hover a bar to see the filing it came from.";
+  drawMain(rs, div, unit, ccy);
+  drawGrowth(rs);
+  renderTable(rs, ccy); renderDocs();
+}
+
+function baseOpts(unitLabel) {
+  const tc = css("--text-2"), grid = css("--grid");
+  return {
+    responsive: true, maintainAspectRatio: false, animation: { duration: 250 },
+    interaction: { mode: "index", intersect: false },
+    plugins: { legend: { display: false },
+      tooltip: { backgroundColor: css("--surface"), titleColor: css("--text"), bodyColor: css("--text-2"),
+        borderColor: css("--border"), borderWidth: 1, padding: 10, displayColors: false } },
+    scales: {
+      x: { grid: { display: false }, ticks: { color: tc, maxRotation: 45, autoSkip: true, autoSkipPadding: 8 }, border: { color: grid } },
+      y: { grid: { color: grid }, border: { display: false }, ticks: { color: tc }, title: { display: !!unitLabel, text: unitLabel, color: tc } },
+    },
+  };
+}
+
+function drawMain(rs, div, unit, ccy) {
+  const accent = css("--accent");
+  const isLine = state.freq === "TTM";
+  const opts = baseOpts(unit);
+  opts.scales.y.beginAtZero = true;
+  opts.plugins.tooltip.callbacks = {
+    title: items => rs[items[0].dataIndex].label,
+    label: item => {
+      const r = rs[item.dataIndex];
+      const out = [money(r.v, ccy)];
+      if (r.yoy != null) out.push(pct(r.yoy) + " vs a year earlier");
+      out.push(r.basis === "reported" ? "Reported" : "Derived: " + r.basis.replace("derived: ", ""));
+      if (r.src) out.push(r.src.length > 60 ? r.src.slice(0, 57) + "…" : r.src);
+      return out;
+    },
+  };
+  if (state.charts.main) state.charts.main.destroy();
+  state.charts.main = new Chart($("#main"), {
+    type: isLine ? "line" : "bar",
+    data: { labels: rs.map(r => r.label), datasets: [{
+      data: rs.map(r => r.v / div), backgroundColor: accent, borderColor: accent, hoverBackgroundColor: accent,
+      borderRadius: 4, borderSkipped: "start", maxBarThickness: 24, categoryPercentage: .8, barPercentage: .7,
+      borderWidth: isLine ? 2 : 0, pointRadius: isLine ? 3 : 0, pointHoverRadius: 6, pointBackgroundColor: accent, tension: 0,
+    }] },
+    options: opts,
+  });
+}
+
+function drawGrowth(rs) {
+  const g = rs.filter(r => r.yoy != null);
+  $("#growthCard").classList.toggle("hidden", !g.length);
+  if (state.charts.growth) state.charts.growth.destroy();
+  if (!g.length) return;
+  const opts = baseOpts("");
+  opts.scales.y.ticks.callback = v => v + "%";
+  opts.scales.y.grid.color = ctx => ctx.tick.value === 0 ? css("--muted") : css("--grid");
+  opts.plugins.tooltip.callbacks = { title: i => g[i[0].dataIndex].label, label: i => pct(g[i.dataIndex].yoy) + " vs same period a year earlier" };
+  state.charts.growth = new Chart($("#growth"), {
+    type: "bar",
+    data: { labels: g.map(r => r.label), datasets: [{ data: g.map(r => +(r.yoy * 100).toFixed(1)),
+      backgroundColor: g.map(r => r.yoy >= 0 ? css("--pos") : css("--neg")),
+      borderRadius: 4, borderSkipped: "start", maxBarThickness: 24, categoryPercentage: .8, barPercentage: .7 }] },
+    options: opts,
+  });
+}
+
+function renderTable(rs, ccy) {
+  $("#dataTable").innerHTML = `<thead><tr><th>Period</th><th class="r">Receipts</th><th class="r">YoY</th><th>Basis</th><th>Source</th></tr></thead><tbody>` +
+    [...rs].reverse().map(r => `<tr><td>${esc(r.label)}</td><td class="r">${money(r.v, ccy)}</td><td class="r">${pct(r.yoy)}</td>` +
+      `<td>${esc(r.basis)}</td><td>${r.doc ? `<a href="${asxLink(r.doc)}" target="_blank" rel="noopener">${esc(r.src || "ASX filing")}</a>` : esc(r.src)}</td></tr>`).join("") + "</tbody>";
+}
+
+function renderDocs() {
+  const d = state.data;
+  const label = { parsed: "✓ read", no_data: "no receipts line", error: "couldn't open", pending: "waiting" };
+  $("#docTable").innerHTML = `<thead><tr><th>Released</th><th>Filing</th><th>Result</th></tr></thead><tbody>` +
+    ((d && d.docs) || []).map(x => `<tr><td>${x.date}</td><td><a href="${asxLink(x.id)}" target="_blank" rel="noopener">${esc(x.title)}</a></td>` +
+      `<td title="${esc(x.note)}">${label[x.status] || x.status}</td></tr>`).join("") + "</tbody>";
+}
+
+function switchTab(v) {
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  $("#tab-data").classList.toggle("hidden", v !== "data");
+  $("#tab-docs").classList.toggle("hidden", v !== "docs");
+}
+
+// ---------------------------------------------------------- controls
+document.querySelectorAll("#freq button").forEach(b => b.onclick = () => { if (!b.disabled) { state.freq = b.dataset.v; render(); } });
+document.querySelectorAll("#range button").forEach(b => b.onclick = () => { state.range = +b.dataset.v; render(); });
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => switchTab(b.dataset.v));
+$("#csv").onclick = () => {
+  const d = state.data, rs = rows();
+  const lines = [["period", "period_end", "receipts", "yoy", "basis", "source"].join(",")]
+    .concat(rs.map(r => [r.label, r.end, r.v, r.yoy ?? "", r.basis, `"${(r.src || "").replace(/"/g, "'")}"`].join(",")));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = `${d.ticker}_receipts_${state.freq.toLowerCase()}.csv`; a.click();
+};
+$("h1").style.cursor = "pointer";
+$("h1").onclick = () => { history.replaceState(null, "", location.pathname); $("#view").classList.add("hidden"); $("#home").classList.remove("hidden"); showChips(); };
+window.addEventListener("hashchange", () => location.hash.length > 1 && load(location.hash.slice(1)));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.data && render());
+init();
+</script>
+</body>
+</html>

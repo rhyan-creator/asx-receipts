@@ -1,0 +1,7 @@
+# Tickers loaded first. One per line. The rest of the ASX follows automatically.
+LGI
+C79
+LBL
+SPZ
+NOL
+CAF
