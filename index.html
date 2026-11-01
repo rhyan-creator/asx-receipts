@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ASX Receipts</title>
+<title>ASX Database</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2' y='8' width='3' height='6' rx='1' fill='%232a78d6'/><rect x='6.5' y='5' width='3' height='9' rx='1' fill='%232a78d6'/><rect x='11' y='2' width='3' height='12' rx='1' fill='%232a78d6'/></svg>">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
@@ -12,6 +12,7 @@
   --bg: #f6f6f4; --surface: #fcfcfb; --border: #e4e3df;
   --text: #0b0b0b; --text-2: #52514e; --muted: #8a8984;
   --accent: #2a78d6; --accent-soft: #e8f1fc;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #6250d6;
   --pos: #1baf7a; --neg: #e34948; --warn-bg: #fff6e0; --warn: #8a5a00;
   --grid: rgba(0,0,0,.07);
 }
@@ -21,6 +22,7 @@
     --bg: #111110; --surface: #1a1a19; --border: #2e2e2b;
     --text: #f0efec; --text-2: #c3c2b7; --muted: #8a8984;
     --accent: #3987e5; --accent-soft: #1c2b3f;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #9085e9;
     --pos: #199e70; --neg: #e66767; --warn-bg: #2e2412; --warn: #e8b85a;
     --grid: rgba(255,255,255,.08);
   }
@@ -28,9 +30,9 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
-.wrap { max-width: 1120px; margin: 0 auto; padding: 28px 16px 60px; }
+.wrap { max-width: 1160px; margin: 0 auto; padding: 28px 16px 60px; }
 header { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
-h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; cursor: pointer; }
 .sub { color: var(--muted); font-size: 13px; }
 .search { position: relative; margin: 20px 0 8px; }
 .search input { width: 100%; font: inherit; font-size: 17px; padding: 14px 16px; border-radius: 12px;
@@ -46,13 +48,24 @@ h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
 .title { margin: 28px 0 4px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .title h2 { margin: 0; font-size: 26px; letter-spacing: -.02em; }
 .title .name { color: var(--text-2); }
-.controls { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
-.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+.title .px { margin-left: auto; font-size: 14px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.views { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 14px 0 4px; }
+.views button { font: inherit; font-size: 15px; font-weight: 500; border: 0; background: none; color: var(--text-2);
+  padding: 8px 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; }
+.views button.on { color: var(--text); border-color: var(--accent); }
+.controls { display: flex; gap: 12px; flex-wrap: wrap; margin: 14px 0; align-items: center; }
+.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 3px; flex-wrap: wrap; }
 .seg button { font: inherit; font-size: 14px; border: 0; background: none; color: var(--text-2); padding: 6px 12px; border-radius: 7px; cursor: pointer; }
 .seg button.on { background: var(--accent); color: #fff; }
+.seg button:disabled { opacity: .35; cursor: default; }
+.chips2 { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
+.chips2 button { font: inherit; font-size: 13px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+  border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+.chips2 button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 500; }
+.chips2 button:disabled { opacity: .35; cursor: default; }
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 8px 0 16px; }
-.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
-.tile .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.tile .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .v { font-size: 24px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .tile .d { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .d.up { color: var(--pos); } .d.down { color: var(--neg); }
@@ -67,10 +80,21 @@ h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
 .tabs button { font: inherit; font-size: 14px; border: 0; background: none; color: var(--text-2); padding: 6px 10px; border-bottom: 2px solid transparent; cursor: pointer; }
 .tabs button.on { color: var(--text); border-color: var(--accent); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
-th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
 td.r, th.r { text-align: right; }
-.scroll { max-height: 420px; overflow: auto; }
+.scroll { max-height: 460px; overflow: auto; }
+.scroll:has(table.fin) { max-height: none; }
+.fin th:first-child, .fin td:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
+.fin th:first-child { z-index: 2; }
+.fin td.lab { color: var(--text); font-weight: 500; }
+.fin tr.pct td { color: var(--text-2); }
+.fin tr.sep td { border-top: 2px solid var(--border); }
+.fin td.cell { cursor: default; }
+.fin td.cell.link { cursor: pointer; }
+.fin td.cell.link:hover { background: var(--accent-soft); }
+.mk { font-size: 10px; margin-left: 3px; vertical-align: super; }
+.mk.ok { color: var(--pos); } .mk.bad { color: var(--warn); }
 a { color: var(--accent); }
 .btn { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text); cursor: pointer; margin-top: 10px; }
@@ -81,29 +105,39 @@ a { color: var(--accent); }
 .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 .hidden { display: none !important; }
 .custom { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-2); }
-.custom select { font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
+.custom select, .pricebox input[type=number] { font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text); }
-.switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); cursor: pointer; user-select: none; margin-left: auto; }
-.switch input { appearance: none; width: 34px; height: 20px; border-radius: 999px; background: var(--border); position: relative; cursor: pointer; transition: background .15s; margin: 0; }
+.switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); cursor: pointer; user-select: none; }
+.switch input { appearance: none; width: 34px; height: 20px; border-radius: 999px; background: var(--border); position: relative; cursor: pointer; transition: background .15s; margin: 0; flex: none; }
 .switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
 .switch input:checked { background: var(--accent); }
 .switch input:checked::after { left: 16px; }
+.push { margin-left: auto; }
 .rangeinfo { font-size: 13px; color: var(--muted); margin: -6px 0 12px; }
 .stale { background: var(--accent-soft); color: var(--text); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin: 0 0 12px; }
 .stale button { font: inherit; font-size: 13px; border: 0; background: var(--accent); color: #fff; border-radius: 7px; padding: 4px 10px; margin-left: 8px; cursor: pointer; }
 .nodata { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-2); font-size: 14px; text-align: center; padding: 0 16px; }
+.pricebox { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 14px; color: var(--text-2); }
+.pricebox input[type=number] { width: 110px; font-variant-numeric: tabular-nums; }
+.pricebox .reset { font: inherit; font-size: 13px; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--text-2); margin: -2px 0 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.legend i.dash { height: 0; border-top: 2px dashed var(--muted); background: none !important; }
+.legend i.dot { height: 0; border-top: 2px dotted var(--muted); background: none !important; }
 @media (max-width: 720px) {
-  .switch { margin-left: 0; }
+  .push { margin-left: 0; }
   .tiles { grid-template-columns: repeat(2, 1fr); }
   .chart { height: 300px; }
   .tile .v { font-size: 20px; }
+  .title .px { margin-left: 0; width: 100%; }
 }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>ASX Receipts</h1>
+    <h1>ASX Database</h1>
     <div class="sub" id="coverage">Loading company list…</div>
   </header>
 
@@ -113,14 +147,17 @@ a { color: var(--accent); }
   </div>
 
   <div id="home" class="empty">
-    Cash receipts from customers for ASX companies, from each quarterly 4C/5B, half-year and annual report.
+    Receipts, financials and valuation multiples for ASX companies, read from their 4C, half-year and annual reports.
     <div class="chips" id="chips"></div>
   </div>
 
   <section id="view" class="hidden">
-    <div class="title"><h2 id="tk"></h2><span class="name" id="nm"></span><span class="pill" id="sector"></span></div>
+    <div class="title"><h2 id="tk"></h2><span class="name" id="nm"></span><span class="pill" id="sector"></span><span class="px" id="pxline"></span></div>
     <div id="banner"></div>
     <div id="body">
+      <div class="views" id="views">
+        <button data-v="receipts">Receipts</button><button data-v="fin">Financials</button><button data-v="val">Valuation</button>
+      </div>
       <div class="controls">
         <div class="seg" id="freq">
           <button data-v="Quarterly">Quarterly</button><button data-v="Half-yearly">Half-yearly</button>
@@ -134,18 +171,34 @@ a { color: var(--accent); }
           <label for="from">From</label><select id="from"></select>
           <label for="to">to</label><select id="to"></select>
         </div>
-        <label class="switch"><input type="checkbox" id="showVals"> Show values</label>
+        <label class="switch push"><input type="checkbox" id="showVals"> Show values</label>
       </div>
       <div class="rangeinfo" id="rangeInfo"></div>
       <div id="stale"></div>
+
+      <!-- valuation-only controls -->
+      <div class="card hidden" id="valControls">
+        <div class="pricebox">
+          <label for="price">Share price</label>
+          <input id="price" type="number" step="0.001" min="0" inputmode="decimal">
+          <span id="priceNote"></span>
+          <button class="reset hidden" id="priceReset">Use last close</button>
+          <label class="switch push"><input type="checkbox" id="leases"> Count lease liabilities as debt</label>
+        </div>
+      </div>
+
+      <div class="chips2 hidden" id="metrics"></div>
       <div class="tiles" id="tiles"></div>
-      <div class="card"><h3 id="chartTitle">Receipts from customers</h3><div class="chart"><canvas id="main"></canvas><div class="nodata hidden" id="noData"></div></div>
+      <div class="card" id="mainCard"><h3 id="chartTitle"></h3><div class="legend hidden" id="legend"></div>
+        <div class="chart"><canvas id="main"></canvas><div class="nodata hidden" id="noData"></div></div>
         <div class="note" id="mainNote"></div></div>
-      <div class="card" id="growthCard"><h3>Growth vs the same period a year earlier</h3>
+      <div class="card" id="growthCard"><h3 id="growthTitle">Growth vs the same period a year earlier</h3>
         <div class="chart small"><canvas id="growth"></canvas></div></div>
+      <div class="card hidden" id="avgCard"><h3 id="avgTitle">Average multiples</h3><div class="scroll"><table id="avgTable"></table></div>
+        <div class="note" id="avgNote"></div></div>
       <div class="tabs" id="tabs"><button data-v="data" class="on">Data</button><button data-v="docs">Source filings</button></div>
       <div class="card" id="tab-data"><div class="scroll"><table id="dataTable"></table></div>
-        <button class="btn" id="csv">Download CSV</button></div>
+        <button class="btn" id="csv">Download CSV</button><div class="note" id="dataNote"></div></div>
       <div class="card hidden" id="tab-docs"><div class="scroll"><table id="docTable"></table></div></div>
     </div>
   </section>
@@ -154,35 +207,118 @@ a { color: var(--accent); }
 <script>
 const $ = s => document.querySelector(s);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-const state = { companies: [], byCode: {}, data: null, freq: "Quarterly", range: "10", from: null, to: null, charts: {}, showVals: false };
-try { state.showVals = localStorage.getItem("showVals") === "1"; } catch (e) {}
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+};
+const state = {
+  companies: [], byCode: {}, data: null, view: "receipts", freq: "Quarterly", range: "10", from: null, to: null,
+  metric: "revenue", mult: "pe", charts: {}, showVals: store.get("showVals", false), leases: store.get("leases", true),
+  price: {},
+};
 const FREQS = ["Quarterly", "Half-yearly", "Annual", "TTM"];
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const SYM = { AUD: "A$", USD: "US$", NZD: "NZ$", CAD: "C$", GBP: "£" };
 const ym = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 const mdiff = (a, b) => { const [ay, am] = a.split("-").map(Number), [by, bm] = b.split("-").map(Number); return (by - ay) * 12 + (bm - am); };
-const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const addM = (e, n) => { const [y, m] = e.split("-").map(Number); const t = y * 12 + m - 1 + n; return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, "0")}`; };
 const fmtYM = e => { const [y, m] = e.split("-").map(Number); return MON[m - 1] + "-" + String(y).slice(2); };
-const lastEnd = f => { const s = state.data.series[f] || []; return s.length ? s[s.length - 1].end : null; };
-const latestAny = () => ["Quarterly", "Half-yearly", "Annual"].map(lastEnd).filter(Boolean).sort().pop();
-const SYM = { AUD: "A$", USD: "US$", NZD: "NZ$", CAD: "C$", GBP: "£" };
-
-// Link to the GitHub Actions page for "load now" (works when hosted at user.github.io/repo/)
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const asxLink = id => `https://www.asx.com.au/asx/v2/statistics/displayAnnouncement.do?display=pdf&idsId=${id}`;
+const pct = (v, dp = 1) => v == null ? "–" : (v >= 0 ? "+" : "") + (v * 100).toFixed(dp) + "%";
+const pctPlain = (v, dp = 1) => v == null || !isFinite(v) ? "–" : (v * 100).toFixed(dp) + "%";
+const xf = v => v == null || !isFinite(v) ? "–" : v.toFixed(1) + "x";
+const ccy = () => (state.data && state.data.currencies && state.data.currencies.length === 1) ? state.data.currencies[0] : "AUD";
+function money(v, c = ccy()) {
+  if (v == null || !isFinite(v)) return "–";
+  const s = SYM[c] || c + " ", a = Math.abs(v), sign = v < 0 ? "−" : "";
+  if (a >= 1e9) return sign + s + (a / 1e9).toFixed(2) + "b";
+  if (a >= 1e6) return sign + s + (a / 1e6).toFixed(1) + "m";
+  if (a >= 1e3) return sign + s + (a / 1e3).toFixed(0) + "k";
+  return sign + s + a.toFixed(0);
+}
 function actionsUrl() {
   const m = location.hostname.match(/^([^.]+)\.github\.io$/);
   const repo = location.pathname.split("/").filter(Boolean)[0];
   return m && repo ? `https://github.com/${m[1]}/${repo}/actions/workflows/update.yml` : null;
 }
 
-function money(v, ccy = "AUD") {
-  if (v == null) return "–";
-  const s = SYM[ccy] || ccy + " ", a = Math.abs(v);
-  if (a >= 1e9) return s + (v / 1e9).toFixed(2) + "b";
-  if (a >= 1e6) return s + (v / 1e6).toFixed(1) + "m";
-  if (a >= 1e3) return s + (v / 1e3).toFixed(0) + "k";
-  return s + v.toFixed(0);
+// ---------------------------------------------------------- metric definitions
+const FLOWS = { revenue: "Revenue", gross: "Gross profit", ebitda: "EBITDA", ebit: "EBIT", npat: "Net income" };
+const STOCKS = { cash: "Cash", debt: "Debt", netdebt: "Net debt", shares: "Shares outstanding" };
+const FIN_METRICS = ["revenue", "gross", "ebitda", "ebit", "npat", "margins", "cash", "debt", "netdebt", "shares"];
+const LABEL = { ...FLOWS, ...STOCKS, margins: "Margins" };
+const MULTS = {
+  pe: { label: "P/E", num: "mc", den: "npat", denLabel: "net income" },
+  ev_ebitda: { label: "EV/EBITDA", num: "ev", den: "ebitda", denLabel: "EBITDA" },
+  ev_ebit: { label: "EV/EBIT", num: "ev", den: "ebit", denLabel: "EBIT" },
+  ev_sales: { label: "EV/Sales", num: "ev", den: "revenue", denLabel: "revenue" },
+  ev_receipts: { label: "EV/Receipts", num: "ev", den: "receipts", denLabel: "receipts" },
+};
+
+// ---------------------------------------------------------- data access
+const D = () => state.data;
+const fye = () => {
+  const a = (D().fin && D().fin.revenue && D().fin.revenue.Annual) || D().series.Annual || [];
+  return a.length ? Number(a[a.length - 1].end.split("-")[1]) : 6;
+};
+function flowRows(metric, freq) {
+  if (metric === "receipts") return D().series[freq] || [];
+  return (D().fin && D().fin[metric] && D().fin[metric][freq]) || [];
 }
-const pct = v => v == null ? "–" : (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%";
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const asxLink = id => `https://www.asx.com.au/asx/v2/statistics/displayAnnouncement.do?display=pdf&idsId=${id}`;
+function stockRowsRaw(metric) {
+  const b = D().bal || {};
+  if (metric === "netdebt") {
+    const cash = Object.fromEntries((b.cash || []).map(r => [r.end, r]));
+    const debt = b.debt || [], lease = Object.fromEntries((b.leases || []).map(r => [r.end, r]));
+    return debt.filter(r => cash[r.end]).map(r => ({ ...r, v: r.v + (state.leases && lease[r.end] ? lease[r.end].v : 0) - cash[r.end].v,
+      basis: "debt" + (state.leases ? " + leases" : "") + " − cash", chk: null }));
+  }
+  if (metric === "debt" && state.leases) {
+    const lease = Object.fromEntries((b.leases || []).map(r => [r.end, r]));
+    return (b.debt || []).map(r => ({ ...r, v: r.v + (lease[r.end] ? lease[r.end].v : 0), basis: "borrowings + leases" }));
+  }
+  return b[metric] || [];
+}
+function stockRows(metric, freq) {
+  const f = fye(), half = ((f + 6 - 1) % 12) + 1;
+  let rows = stockRowsRaw(metric).filter(r => {
+    const m = Number(r.end.split("-")[1]);
+    if (freq === "Annual") return m === f;
+    if (freq === "Half-yearly") return m === f || m === half;
+    return true;
+  });
+  const by = Object.fromEntries(rows.map(r => [r.end, r.v]));
+  return rows.map(r => ({ ...r, label: freq === "Annual" ? `FY${r.end.slice(2, 4)}` : r.label,
+    yoy: by[addM(r.end, -12)] ? r.v / by[addM(r.end, -12)] - 1 : null }));
+}
+function metricRows(metric, freq) {
+  if (metric in STOCKS) return stockRows(metric, freq);
+  return flowRows(metric, freq);
+}
+function hasMetric(m) {
+  if (m === "margins") return hasMetric("revenue") && (hasMetric("ebitda") || hasMetric("ebit") || hasMetric("npat"));
+  if (m === "netdebt") return (D().bal || {}).debt && (D().bal || {}).cash;
+  if (m in STOCKS) return !!((D().bal || {})[m] || []).length;
+  return ["Half-yearly", "Annual", "TTM"].some(f => flowRows(m, f).length);
+}
+const hasFin = () => FIN_METRICS.some(hasMetric);
+
+// ---------------------------------------------------------- range
+function inRange(rows) {
+  if (!rows.length || state.range === "all") return rows;
+  if (state.range === "custom") return rows.filter(r => (!state.from || r.end >= state.from) && (!state.to || r.end <= state.to));
+  const now = new Date();
+  const cut = ym(new Date(now.getFullYear() - Number(state.range), now.getMonth(), 1));
+  return rows.filter(r => r.end > cut);
+}
+function fillCustom(all) {
+  const opts = all.map(r => `<option value="${r.end}">${esc(r.label)}</option>`).join("");
+  $("#from").innerHTML = opts; $("#to").innerHTML = opts;
+  if (!all.length) return;
+  $("#from").value = (all.find(r => r.end >= (state.from || all[0].end)) || all[0]).end;
+  $("#to").value = ([...all].reverse().find(r => r.end <= (state.to || "9999-12")) || all[all.length - 1]).end;
+}
 
 // ---------------------------------------------------------- company list + search
 async function init() {
@@ -196,31 +332,27 @@ async function init() {
     $("#coverage").textContent = `${ready.toLocaleString()} companies with data · ` +
       (done < state.companies.length ? `history ${Math.round(100 * done / state.companies.length)}% loaded · ` : "") +
       `updated ${idx.updated}`;
-    showChips();
   } catch (e) {
     $("#coverage").textContent = "No data yet: the first update hasn't finished.";
   }
+  showChips();
   if (location.hash.length > 1) load(location.hash.slice(1));
 }
-
 function showChips() {
-  let recent = [];
-  try { recent = JSON.parse(localStorage.getItem("recent") || "[]"); } catch (e) {}
+  const recent = store.get("recent", []);
   $("#chips").innerHTML = recent.map(t => `<button class="chip" data-t="${esc(t)}">${esc(t)}</button>`).join("");
   $("#chips").querySelectorAll(".chip").forEach(b => b.onclick = () => load(b.dataset.t));
 }
-
 let sel = -1;
 function suggest() {
-  const q = $("#q").value.trim().toUpperCase();
-  const box = $("#suggest");
+  const q = $("#q").value.trim().toUpperCase(), box = $("#suggest");
   if (!q) { box.style.display = "none"; return; }
   const starts = state.companies.filter(c => c.t.startsWith(q));
   const names = state.companies.filter(c => !c.t.startsWith(q) && c.n.toUpperCase().includes(q));
   const list = [...starts.sort((a, b) => a.t.length - b.t.length), ...names].slice(0, 8);
   sel = list.length ? 0 : -1;
   box.innerHTML = list.map((c, i) => `<li data-t="${c.t}" class="${i === 0 ? "on" : ""}"><b>${c.t}</b><span>${esc(c.n)}</span>` +
-    `<i>${c.st === "ready" ? "" : c.st === "none" ? "no receipts line" : "loading soon"}</i></li>`).join("");
+    `<i>${c.st === "ready" ? "" : c.st === "none" ? "no data found" : "loading soon"}</i></li>`).join("");
   box.style.display = list.length ? "block" : "none";
   box.querySelectorAll("li").forEach(li => li.onmousedown = () => load(li.dataset.t));
 }
@@ -246,163 +378,95 @@ async function load(t) {
   const c = state.byCode[t];
   $("#home").classList.add("hidden"); $("#view").classList.remove("hidden");
   $("#tk").textContent = t; $("#nm").textContent = c ? c.n : "";
-  $("#sector").textContent = c && c.s && c.s !== "Not Applic" ? c.s : "";
-  $("#sector").classList.toggle("hidden", !(c && c.s && c.s !== "Not Applic"));
-  $("#banner").innerHTML = "";
+  const sec = c && c.s && c.s !== "Not Applic" ? c.s : "";
+  $("#sector").textContent = sec; $("#sector").classList.toggle("hidden", !sec);
+  $("#banner").innerHTML = ""; $("#pxline").textContent = "";
   let data = null;
-  try {
-    const r = await fetch(`data/${t}.json`, { cache: "no-cache" });
-    if (r.ok) data = await r.json();
-  } catch (e) {}
-  const hasData = data && Object.values(data.series || {}).some(s => s.length);
-  if (!hasData) {
+  try { const r = await fetch(`data/${t}.json`, { cache: "no-cache" }); if (r.ok) data = await r.json(); } catch (e) {}
+  state.data = data;
+  const hasReceipts = data && FREQS.some(f => (data.series || {})[f] && data.series[f].length);
+  if (data) { data.series = data.series || {}; FREQS.forEach(f => data.series[f] = data.series[f] || []); }
+  if (!data || (!hasReceipts && !hasFin() && !(data.prices))) {
     $("#body").classList.add("hidden");
     const a = actionsUrl();
     let msg;
     if (!c) msg = `<b>${esc(t)}</b> isn't on the current ASX company list. Check the ticker.`;
-    else if (!data || (c.st === "queued")) msg = `<b>${esc(t)}</b> hasn't been loaded yet. The updater works through the whole ASX ` +
+    else if (!data || c.st === "queued") msg = `<b>${esc(t)}</b> hasn't been loaded yet. The updater works through the whole ASX ` +
       `over the first few days.` + (a ? ` To load it now: <a href="${a}" target="_blank" rel="noopener">open the updater</a>, ` +
       `click <b>Run workflow</b>, type <b>${esc(t)}</b> and press the green button. It's ready in about 5 minutes.` : "");
-    else msg = `No "receipts from customers" figures were found in ${esc(t)}'s filings. Banks and companies using the indirect ` +
-      `cash flow method don't report this line. If a figure is missing, you can add it in <b>overrides.csv</b> in the repository.`;
+    else msg = `Nothing could be read from ${esc(t)}'s filings yet. You can add figures in <b>overrides.csv</b> in the repository.`;
     $("#banner").innerHTML = `<div class="banner">${msg}</div>`;
-    if (data && data.docs && data.docs.length) { $("#body").classList.remove("hidden"); hideCharts(); }
-    state.data = data; renderDocs();
+    if (data && data.docs && data.docs.length) { $("#body").classList.remove("hidden"); onlyDocs(); }
     return;
   }
-  $("#body").classList.remove("hidden"); showCharts();
-  state.data = data;
-  try {
-    let recent = JSON.parse(localStorage.getItem("recent") || "[]").filter(x => x !== t);
-    localStorage.setItem("recent", JSON.stringify([t, ...recent].slice(0, 8)));
-  } catch (e) {}
-  // if the chosen frequency stops well before the latest data (e.g. company stopped lodging 4Cs), use a current one
-  const latest = latestAny();
-  const fresh = f => lastEnd(f) && mdiff(lastEnd(f), latest) < 6;
-  if (!fresh(state.freq)) state.freq = ["Quarterly", "Half-yearly", "Annual", "TTM"].find(fresh) || FREQS.find(f => data.series[f].length);
+  $("#body").classList.remove("hidden");
+  ["#views", ".controls", "#tiles", "#mainCard", "#tabs"].forEach(s => $(s).classList.remove("hidden"));
+  const recent = store.get("recent", []).filter(x => x !== t);
+  store.set("recent", [t, ...recent].slice(0, 8));
+  // view availability
+  $("#views [data-v=receipts]").disabled = !hasReceipts;
+  $("#views [data-v=fin]").disabled = !hasFin();
+  $("#views [data-v=val]").disabled = !(data.prices && data.prices.monthly && data.prices.monthly.length);
+  if (state.view === "receipts" && !hasReceipts) state.view = hasFin() ? "fin" : "val";
+  if (state.view === "fin" && !hasFin()) state.view = hasReceipts ? "receipts" : "val";
+  const hasPrices = !!(data.prices && data.prices.monthly && data.prices.monthly.length);
+  if (state.view === "val" && !hasPrices) state.view = hasReceipts ? "receipts" : "fin";
+  if (!hasMetric(state.metric)) state.metric = FIN_METRICS.find(hasMetric) || "revenue";
   if (state.range === "custom") state.range = "10";
-  if (data.currencies.length > 1) $("#banner").innerHTML = `<div class="banner">This company has reported in more than one currency ` +
+  // receipts: start on the most up-to-date frequency
+  if (hasReceipts) {
+    const last = f => { const s = data.series[f]; return s.length ? s[s.length - 1].end : null; };
+    const latest = ["Quarterly", "Half-yearly", "Annual"].map(last).filter(Boolean).sort().pop();
+    const fresh = f => last(f) && mdiff(last(f), latest) < 6;
+    state.rfreq = ["Quarterly", "Half-yearly", "Annual", "TTM"].find(fresh) || FREQS.find(f => data.series[f].length);
+  }
+  if (!state.ffreq) state.ffreq = "Annual";
+  const px = data.prices && data.prices.last;
+  if (px) $("#pxline").textContent = `Last close ${(SYM[ccy()] || "")}${px.close.toFixed(px.close < 1 ? 3 : 2)} · ${px.date}`;
+  if (data.currencies && data.currencies.length > 1) $("#banner").innerHTML = `<div class="banner">This company has reported in more than one currency ` +
     `(${data.currencies.join(", ")}). Figures are shown as reported, without FX conversion.</div>`;
   render();
 }
-function hideCharts() { ["#tiles", ".controls", ".card:has(#main)", "#growthCard", "#tab-data", "#tabs button[data-v='data']"].forEach(s => { const e = $(s); if (e) e.classList.add("hidden"); }); switchTab("docs"); }
-function showCharts() { ["#tiles", ".controls", ".card:has(#main)", "#growthCard", "#tabs button[data-v='data']"].forEach(s => { const e = $(s); if (e) e.classList.remove("hidden"); }); switchTab("data"); }
-
-// ---------------------------------------------------------- render
-function rows() {
-  const all = state.data.series[state.freq] || [];
-  if (!all.length || state.range === "all") return all;
-  if (state.range === "custom") return all.filter(r => (!state.from || r.end >= state.from) && (!state.to || r.end <= state.to));
-  const now = new Date();
-  const cut = ym(new Date(now.getFullYear() - Number(state.range), now.getMonth(), 1));  // measured back from today
-  return all.filter(r => r.end > cut);
+function onlyDocs() {
+  ["#views", ".controls", "#tiles", "#mainCard", "#growthCard", "#avgCard", "#valControls", "#metrics", "#tab-data"].forEach(s => $(s).classList.add("hidden"));
+  $("#rangeInfo").textContent = ""; $("#stale").innerHTML = "";
+  switchTab("docs"); renderDocs();
 }
 
-function fillCustom() {
-  const all = state.data.series[state.freq] || [];
-  const opts = all.map(r => `<option value="${r.end}">${esc(r.label)}</option>`).join("");
-  $("#from").innerHTML = opts; $("#to").innerHTML = opts;
-  const pick = (want, fallback) => (all.find(r => r.end >= want) || fallback || {}).end;
-  if (all.length) {
-    $("#from").value = pick(state.from || all[0].end, all[0]);
-    const toCand = [...all].reverse().find(r => r.end <= (state.to || "9999-12")) || all[all.length - 1];
-    $("#to").value = toCand.end;
-  }
-}
-
-function render() {
-  const d = state.data, ccy = d.currencies.length === 1 ? d.currencies[0] : "AUD";
-  document.querySelectorAll("#freq button").forEach(b => {
-    b.classList.toggle("on", b.dataset.v === state.freq);
-    b.disabled = !d.series[b.dataset.v].length; b.style.opacity = b.disabled ? .4 : 1;
-  });
-  document.querySelectorAll("#range button").forEach(b => b.classList.toggle("on", b.dataset.v === state.range));
-  $("#customBox").classList.toggle("hidden", state.range !== "custom");
-  if (state.range === "custom") fillCustom();
-  $("#showVals").checked = state.showVals;
-  const rs = rows();
-  const all = d.series[state.freq] || [];
-  // date range shown
-  const fname = { Quarterly: "quarters", "Half-yearly": "half-years", Annual: "years", TTM: "trailing-12-month points" }[state.freq];
-  $("#rangeInfo").textContent = rs.length
-    ? `Showing ${rs[0].label} to ${rs[rs.length - 1].label} · ${rs.length} ${rs.length === 1 ? fname.replace(/s$/, "") : fname}` +
-      (all.length ? ` · ${state.freq.toLowerCase()} data available ${all[0].label} to ${all[all.length - 1].label}` : "")
-    : "";
-  // explain when this frequency stops before the latest data
-  const latest = latestAny(), le = lastEnd(state.freq);
-  $("#stale").innerHTML = "";
-  if (le && latest && mdiff(le, latest) >= 6) {
-    const alt = ["Quarterly", "Half-yearly", "Annual"].find(f => lastEnd(f) && mdiff(lastEnd(f), latest) < 6);
-    const why = state.freq === "Quarterly" ? ` ${esc(d.ticker)} stopped lodging quarterly 4C cash flow reports after that.` : "";
-    $("#stale").innerHTML = `<div class="stale">The latest ${state.freq.toLowerCase()} figure is <b>${fmtYM(le)}</b>.${why}` +
-      (alt ? ` ${alt} figures run to <b>${fmtYM(lastEnd(alt))}</b>.<button data-f="${alt}">Show ${alt.toLowerCase()}</button>` : "") + `</div>`;
-    const btn = $("#stale button"); if (btn) btn.onclick = () => { state.freq = btn.dataset.f; render(); };
-  }
-  if (!rs.length) {
-    $("#tiles").innerHTML = "";
-    ["main", "growth"].forEach(k => { if (state.charts[k]) { state.charts[k].destroy(); state.charts[k] = null; } });
-    $("#main").classList.add("hidden"); $("#noData").classList.remove("hidden");
-    $("#noData").textContent = `No ${state.freq.toLowerCase()} figures in this date range.`;
-    $("#growthCard").classList.add("hidden"); $("#mainNote").textContent = "";
-    renderTable(rs, ccy); renderDocs();
-    return;
-  }
-  $("#main").classList.remove("hidden"); $("#noData").classList.add("hidden");
-  // tiles
-  const last = rs[rs.length - 1], ttm = d.series.TTM, tl = ttm[ttm.length - 1];
-  const tile = (k, v, dl, cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="d ${cls}">${dl || "&nbsp;"}</div></div>`;
-  const dir = v => v == null ? "" : v >= 0 ? "up" : "down";
-  const parsed = d.docs.filter(x => x.status === "parsed").length;
-  $("#tiles").innerHTML =
-    tile(`Latest · ${last.label}`, money(last.v, ccy), last.yoy != null ? pct(last.yoy) + " YoY" : "", dir(last.yoy)) +
-    (tl ? tile(`Trailing 12m · ${tl.label}`, money(tl.v, ccy), tl.yoy != null ? pct(tl.yoy) + " YoY" : "", dir(tl.yoy)) : tile("Trailing 12m", "–")) +
-    tile(d.cagr ? `Annual CAGR · ${d.cagr.span}` : "Annual CAGR", d.cagr ? pct(d.cagr.rate).replace("+", "") : "–", d.cagr && d.cagr.span ? "compound, per year" : "") +
-    tile("Filings read", parsed, `updated ${d.updated || "–"}`);
-  // charts
-  const max = Math.max(...rs.map(r => Math.abs(r.v || 0)));
-  const div = max >= 5e6 ? 1e6 : 1e3, unit = (SYM[ccy] || ccy + " ") + (div === 1e6 ? "m" : "k");
-  $("#chartTitle").textContent = `Receipts from customers · ${state.freq === "TTM" ? "trailing 12 months" : state.freq.toLowerCase()} · ${unit}`;
-  const derived = rs.filter(r => r.basis !== "reported").length;
-  $("#mainNote").textContent = (derived ? `${derived} of ${rs.length} figures are derived (e.g. H2 = FY − H1); hover for details. ` : "") +
-    "Hover a bar to see the filing it came from.";
-  drawMain(rs, div, unit, ccy);
-  drawGrowth(rs);
-  renderTable(rs, ccy); renderDocs();
-}
-
-// draws each bar's / point's value on the chart when "Show values" is on
+// ---------------------------------------------------------- chart helpers
 const valueLabels = {
   id: "valueLabels",
-  afterDatasetsDraw(chart, _args, o) {
+  afterDatasetsDraw(chart, _a, o) {
     if (!o || !o.display) return;
-    const { ctx } = chart, meta = chart.getDatasetMeta(0), vals = chart.data.datasets[0].data;
-    if (!meta.data.length) return;
-    const w = meta.data[0].width || (chart.chartArea.width / meta.data.length);
+    const { ctx } = chart;
     ctx.save();
     ctx.font = "500 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif";
     ctx.fillStyle = css("--text-2");
-    const texts = vals.map(o.fmt);
-    const widest = Math.max(...texts.map(t => ctx.measureText(t).width));
-    const rotate = widest > w + 6 && widest > (chart.chartArea.width / meta.data.length) - 2;
-    meta.data.forEach((el, i) => {
-      const v = vals[i]; if (v == null) return;
-      const neg = v < 0, t = texts[i];
-      ctx.save();
-      if (rotate) {
-        ctx.translate(el.x, neg ? el.y + 4 : el.y - 4);
-        ctx.rotate(-Math.PI / 2);
-        ctx.textAlign = neg ? "right" : "left"; ctx.textBaseline = "middle";
-        ctx.fillText(t, 0, 0);
-      } else {
-        ctx.textAlign = "center"; ctx.textBaseline = neg ? "top" : "bottom";
-        ctx.fillText(t, el.x, neg ? el.y + 4 : el.y - 4);
-      }
-      ctx.restore();
+    chart.data.datasets.forEach((ds, di) => {
+      if (ds.noLabels) return;
+      const meta = chart.getDatasetMeta(di);
+      if (meta.hidden || !meta.data.length) return;
+      const texts = ds.data.map(v => v == null ? "" : o.fmt(v));
+      const slot = chart.chartArea.width / meta.data.length;
+      const widest = Math.max(...texts.map(t => ctx.measureText(t).width));
+      const rotate = ds.type !== "line" && chart.config.type !== "line" && widest > slot - 2;
+      meta.data.forEach((el, i) => {
+        const v = ds.data[i]; if (v == null || (o.only && !o.only(i))) return;
+        const neg = v < 0, t = texts[i];
+        ctx.save();
+        if (rotate) {
+          ctx.translate(el.x, neg ? el.y + 4 : el.y - 4); ctx.rotate(-Math.PI / 2);
+          ctx.textAlign = neg ? "right" : "left"; ctx.textBaseline = "middle"; ctx.fillText(t, 0, 0);
+        } else {
+          ctx.textAlign = "center"; ctx.textBaseline = neg ? "top" : "bottom";
+          ctx.fillText(t, el.x, neg ? el.y + 5 : el.y - 5);
+        }
+        ctx.restore();
+      });
     });
     ctx.restore();
   },
 };
-
 function baseOpts(unitLabel) {
   const tc = css("--text-2"), grid = css("--grid");
   return {
@@ -417,44 +481,38 @@ function baseOpts(unitLabel) {
     },
   };
 }
-
-function drawMain(rs, div, unit, ccy) {
-  const accent = css("--accent");
-  const isLine = state.freq === "TTM";
+function kill(k) { if (state.charts[k]) { state.charts[k].destroy(); state.charts[k] = null; } }
+function scaleFor(vals) {
+  const max = Math.max(0, ...vals.filter(v => v != null).map(Math.abs));
+  const div = max >= 5e6 ? 1e6 : 1e3;
+  return { div, unit: (SYM[ccy()] || ccy() + " ") + (div === 1e6 ? "m" : "k") };
+}
+function barChart(rs, { div, unit, isLine = false, tip }) {
+  kill("main");
+  const accent = css("--s1");
   const opts = baseOpts(unit);
   opts.scales.y.beginAtZero = true;
-  opts.scales.x.ticks.autoSkip = rs.length > 28;  // label every period unless it gets crowded
-  const dp = Math.max(...rs.map(r => Math.abs(r.v / div))) < 100 ? 1 : 0;
+  opts.scales.x.ticks.autoSkip = rs.length > 28;
+  const dp = Math.max(0, ...rs.map(r => Math.abs((r.v || 0) / div))) < 100 ? 1 : 0;
   opts.plugins.valueLabels = { display: state.showVals, fmt: v => v.toLocaleString("en-AU", { minimumFractionDigits: dp, maximumFractionDigits: dp }) };
   if (state.showVals) opts.scales.y.grace = rs.length > 24 ? "22%" : "10%";
-  opts.plugins.tooltip.callbacks = {
-    title: items => rs[items[0].dataIndex].label,
-    label: item => {
-      const r = rs[item.dataIndex];
-      const out = [money(r.v, ccy)];
-      if (r.yoy != null) out.push(pct(r.yoy) + " vs a year earlier");
-      out.push(r.basis === "reported" ? "Reported" : "Derived: " + r.basis.replace("derived: ", ""));
-      if (r.src) out.push(r.src.length > 60 ? r.src.slice(0, 57) + "…" : r.src);
-      return out;
-    },
-  };
-  if (state.charts.main) state.charts.main.destroy();
+  opts.plugins.tooltip.callbacks = { title: i => rs[i[0].dataIndex].label, label: i => tip(rs[i.dataIndex]) };
   state.charts.main = new Chart($("#main"), {
     type: isLine ? "line" : "bar",
     data: { labels: rs.map(r => r.label), datasets: [{
-      data: rs.map(r => r.v / div), backgroundColor: accent, borderColor: accent, hoverBackgroundColor: accent,
+      data: rs.map(r => r.v == null ? null : r.v / div), backgroundColor: accent, borderColor: accent, hoverBackgroundColor: accent,
       borderRadius: 4, borderSkipped: "start", maxBarThickness: 24, categoryPercentage: .8, barPercentage: .7,
       borderWidth: isLine ? 2 : 0, pointRadius: isLine ? 3 : 0, pointHoverRadius: 6, pointBackgroundColor: accent, tension: 0,
     }] },
     options: opts, plugins: [valueLabels],
   });
 }
-
-function drawGrowth(rs) {
+function growthChart(rs, title) {
+  kill("growth");
   const g = rs.filter(r => r.yoy != null);
   $("#growthCard").classList.toggle("hidden", !g.length);
-  if (state.charts.growth) state.charts.growth.destroy();
   if (!g.length) return;
+  $("#growthTitle").textContent = title || "Growth vs the same period a year earlier";
   const opts = baseOpts("");
   opts.scales.y.ticks.callback = v => v + "%";
   opts.scales.x.ticks.autoSkip = g.length > 28;
@@ -470,21 +528,400 @@ function drawGrowth(rs) {
     options: opts, plugins: [valueLabels],
   });
 }
+const tile = (k, v, dl, cls = "") => `<div class="tile"><div class="k" title="${esc(k)}">${k}</div><div class="v">${v}</div><div class="d ${cls}">${dl || "&nbsp;"}</div></div>`;
+const dir = v => v == null ? "" : v >= 0 ? "up" : "down";
+const tipLines = r => {
+  const out = [];
+  if (r.yoy != null) out.push(pct(r.yoy) + " vs a year earlier");
+  out.push(r.basis === "reported" ? "Reported" : r.basis === "override" ? "Your override" : "Derived: " + String(r.basis).replace("derived: ", ""));
+  if (r.chk === "verified") out.push("✓ matches the next report's comparative");
+  if (r.chk === "differs") out.push("! next report shows a different figure (restated?)");
+  if (r.src) out.push(r.src.length > 60 ? r.src.slice(0, 57) + "…" : r.src);
+  return out;
+};
+function noData(msg) {
+  kill("main"); kill("growth");
+  $("#main").classList.add("hidden"); $("#noData").classList.remove("hidden"); $("#noData").textContent = msg;
+  $("#growthCard").classList.add("hidden"); $("#legend").classList.add("hidden");
+}
+function showCanvas() { $("#main").classList.remove("hidden"); $("#noData").classList.add("hidden"); }
 
-function renderTable(rs, ccy) {
-  $("#dataTable").innerHTML = `<thead><tr><th>Period</th><th class="r">Receipts</th><th class="r">YoY</th><th>Basis</th><th>Source</th></tr></thead><tbody>` +
-    [...rs].reverse().map(r => `<tr><td>${esc(r.label)}</td><td class="r">${money(r.v, ccy)}</td><td class="r">${pct(r.yoy)}</td>` +
-      `<td>${esc(r.basis)}</td><td>${r.doc ? `<a href="${asxLink(r.doc)}" target="_blank" rel="noopener">${esc(r.src || "ASX filing")}</a>` : esc(r.src)}</td></tr>`).join("") + "</tbody>";
+// ---------------------------------------------------------- render
+function render() {
+  const d = D();
+  document.querySelectorAll("#views button").forEach(b => b.classList.toggle("on", b.dataset.v === state.view));
+  const v = state.view;
+  ["#valControls", "#avgCard"].forEach(s => $(s).classList.toggle("hidden", v !== "val"));
+  $("#metrics").classList.toggle("hidden", v === "receipts");
+  $("#freq").classList.toggle("hidden", v === "val");
+  $("#legend").classList.add("hidden");
+  $("#stale").innerHTML = "";
+  document.querySelectorAll("#range button").forEach(b => b.classList.toggle("on", b.dataset.v === state.range));
+  $("#customBox").classList.toggle("hidden", state.range !== "custom");
+  $("#showVals").checked = state.showVals;
+  if (v === "receipts") renderReceipts();
+  else if (v === "fin") renderFin();
+  else renderVal();
+  renderDocs();
+}
+function setFreqButtons(freq, avail) {
+  document.querySelectorAll("#freq button").forEach(b => {
+    b.classList.toggle("on", b.dataset.v === freq); b.disabled = !avail(b.dataset.v);
+  });
+}
+function rangeLine(rs, all, noun) {
+  $("#rangeInfo").textContent = rs.length ? `Showing ${rs[0].label} to ${rs[rs.length - 1].label} · ${rs.length} ${noun}` +
+    (all.length ? ` · data available ${all[0].label} to ${all[all.length - 1].label}` : "") : "";
 }
 
+// ----- receipts view
+function renderReceipts() {
+  const d = D(), freq = state.rfreq;
+  setFreqButtons(freq, f => d.series[f].length);
+  const all = d.series[freq] || [];
+  if (state.range === "custom") fillCustom(all);
+  const rs = inRange(all);
+  rangeLine(rs, all, { Quarterly: "quarters", "Half-yearly": "half-years", Annual: "years", TTM: "points" }[freq]);
+  const last = f => { const s = d.series[f]; return s.length ? s[s.length - 1].end : null; };
+  const latest = ["Quarterly", "Half-yearly", "Annual"].map(last).filter(Boolean).sort().pop(), le = last(freq);
+  if (le && latest && mdiff(le, latest) >= 6) {
+    const alt = ["Quarterly", "Half-yearly", "Annual"].find(f => last(f) && mdiff(last(f), latest) < 6);
+    const why = freq === "Quarterly" ? ` ${esc(d.ticker)} stopped lodging quarterly 4C cash flow reports after that.` : "";
+    $("#stale").innerHTML = `<div class="stale">The latest ${freq.toLowerCase()} figure is <b>${fmtYM(le)}</b>.${why}` +
+      (alt ? ` ${alt} figures run to <b>${fmtYM(last(alt))}</b>.<button data-f="${alt}">Show ${alt.toLowerCase()}</button>` : "") + `</div>`;
+    const btn = $("#stale button"); if (btn) btn.onclick = () => { state.rfreq = btn.dataset.f; render(); };
+  }
+  if (!rs.length) { $("#tiles").innerHTML = ""; noData(`No ${freq.toLowerCase()} figures in this date range.`); dataTable([], "receipts"); return; }
+  showCanvas();
+  const lr = rs[rs.length - 1], ttm = d.series.TTM, tl = ttm[ttm.length - 1];
+  const parsed = d.docs.filter(x => x.status === "parsed").length;
+  $("#tiles").innerHTML =
+    tile(`Latest · ${lr.label}`, money(lr.v), lr.yoy != null ? pct(lr.yoy) + " YoY" : "", dir(lr.yoy)) +
+    (tl ? tile(`Trailing 12m · ${tl.label}`, money(tl.v), tl.yoy != null ? pct(tl.yoy) + " YoY" : "", dir(tl.yoy)) : tile("Trailing 12m", "–")) +
+    tile(d.cagr ? `Annual CAGR · ${d.cagr.span}` : "Annual CAGR", d.cagr ? pctPlain(d.cagr.rate) : "–", d.cagr ? "compound, per year" : "") +
+    tile("Filings read", parsed, `updated ${d.updated || "–"}`);
+  const sc = scaleFor(rs.map(r => r.v));
+  $("#chartTitle").textContent = `Receipts from customers · ${freq === "TTM" ? "trailing 12 months" : freq.toLowerCase()} · ${sc.unit}`;
+  const derived = rs.filter(r => r.basis !== "reported").length;
+  $("#mainNote").textContent = (derived ? `${derived} of ${rs.length} figures are derived (e.g. H2 = FY − H1); hover for details. ` : "") + "Hover a bar to see the filing it came from.";
+  barChart(rs, { ...sc, isLine: freq === "TTM", tip: r => [money(r.v), ...tipLines(r)] });
+  growthChart(rs);
+  dataTable(rs, "receipts");
+}
+
+// ----- financials view
+function renderFin() {
+  const freqAvail = f => state.metric in STOCKS ? (f !== "TTM" && (f !== "Quarterly" || stockRowsRaw(state.metric).some(r => r.q))) :
+    f !== "Quarterly" && (state.metric === "margins" ? flowRows("revenue", f).length : flowRows(state.metric, f).length);
+  if (!freqAvail(state.ffreq)) state.ffreq = ["Annual", "Half-yearly", "TTM", "Quarterly"].find(freqAvail) || "Annual";
+  const freq = state.ffreq;
+  setFreqButtons(freq, freqAvail);
+  $("#metrics").innerHTML = FIN_METRICS.map(m => `<button data-m="${m}" class="${m === state.metric ? "on" : ""}" ${hasMetric(m) ? "" : "disabled"}>${LABEL[m]}</button>`).join("");
+  $("#metrics").querySelectorAll("button").forEach(b => b.onclick = () => { state.metric = b.dataset.m; render(); });
+  if (state.metric === "margins") return renderMargins(freq);
+  const all = metricRows(state.metric, freq);
+  if (state.range === "custom") fillCustom(all);
+  const rs = inRange(all);
+  rangeLine(rs, all, freq === "Annual" ? "years" : "periods");
+  const name = LABEL[state.metric] + (state.metric === "debt" && state.leases ? " (incl. leases)" : "");
+  if (!rs.length) { $("#tiles").innerHTML = ""; noData(`No ${name.toLowerCase()} figures in this date range.`); finTable(freq); return; }
+  showCanvas();
+  const lr = rs[rs.length - 1];
+  const isShares = state.metric === "shares";
+  const fmt = v => isShares ? (v / 1e6).toFixed(1) + "m" : money(v);
+  const ver = rs.filter(r => r.chk === "verified").length, dif = rs.filter(r => r.chk === "differs").length;
+  const first = rs.find(r => r.v > 0), yrs = first ? mdiff(first.end, lr.end) / 12 : 0;
+  const cg = first && lr.v > 0 && yrs >= 1 ? Math.pow(lr.v / first.v, 1 / yrs) - 1 : null;
+  const signed = state.metric === "netdebt" || rs.some(r => r.v < 0);
+  const prevYr = rs.find(r => r.end === addM(lr.end, -12));
+  const chg = (a, b) => (a - b >= 0 ? "+" : "−") + money(Math.abs(a - b));
+  const t1 = signed ? (prevYr ? `${chg(lr.v, prevYr.v)} vs a year earlier` : "") : (lr.yoy != null ? pct(lr.yoy) + " YoY" : "");
+  const t1cls = signed ? (prevYr ? dir((state.metric === "netdebt" ? -1 : 1) * (lr.v - prevYr.v)) : "") : isShares ? "" : dir(lr.yoy);
+  let t3;
+  if (state.metric === "revenue") {
+    const rc = flowRows("receipts", freq).find(r => r.end === lr.end);
+    t3 = tile(`Receipts ÷ revenue · ${lr.label}`, rc && lr.v ? pctPlain(rc.v / lr.v) : "–", "cash collected vs revenue booked (receipts include GST)");
+  } else if (state.metric in FLOWS) t3 = tile(`Margin · ${lr.label}`, marginAt(state.metric, freq, lr.end), "of revenue");
+  else t3 = tile("As at", lr.label, lr.src ? esc(lr.src.slice(0, 40)) : "");
+  $("#tiles").innerHTML =
+    tile(`${name} · ${lr.label}`, fmt(lr.v), t1, t1cls) +
+    (signed ? tile("Change over range", rs.length > 1 ? chg(lr.v, rs[0].v) : "–", rs.length > 1 ? `${rs[0].label} to ${lr.label}` : "")
+      : tile(`Change over range`, cg != null ? pctPlain(cg) : "–", cg != null ? `per year, ${first.label} to ${lr.label}` : "")) +
+    t3 +
+    (state.metric === "netdebt" ? tile("Built from", "Cash & debt", "each checked separately in the table below")
+      : tile("Cross-checked", `${ver}/${rs.length}`, dif ? `${dif} differ from a later report` : "match the next report's comparatives", dif ? "down" : ""));
+  if (isShares) {
+    $("#chartTitle").textContent = `Shares outstanding · millions (adjusted for splits and consolidations)`;
+    barChart(rs, { div: 1e6, unit: "millions", tip: r => [(r.v / 1e6).toFixed(2) + "m shares", ...tipLines(r)] });
+  } else {
+    const sc = scaleFor(rs.map(r => r.v));
+    $("#chartTitle").textContent = `${name} · ${freq === "TTM" ? "trailing 12 months" : freq.toLowerCase()} · ${sc.unit}`;
+    barChart(rs, { ...sc, isLine: freq === "TTM", tip: r => [money(r.v), ...tipLines(r)] });
+  }
+  $("#mainNote").textContent = state.metric === "ebitda" || state.metric === "ebit" ?
+    "EBIT = profit before tax + finance costs − finance income; EBITDA adds depreciation & amortisation. Built from the statutory accounts, so it may differ from a company's 'underlying' figure." :
+    state.metric === "shares" ? "Ordinary shares on issue at period end where found; otherwise the weighted average from the EPS note." :
+    state.metric === "netdebt" ? "Negative net debt means net cash." : "Hover a bar for its source filing and cross-check.";
+  growthChart(isShares || state.metric === "netdebt" ? [] : rs);
+  finTable(freq);
+}
+function marginAt(metric, freq, end) {
+  const rev = flowRows("revenue", freq).find(r => r.end === end), m = flowRows(metric, freq).find(r => r.end === end);
+  return rev && m && rev.v ? pctPlain(m.v / rev.v) : "–";
+}
+function renderMargins(freq) {
+  const rev = flowRows("revenue", freq);
+  const lines = [["gross", "Gross margin", "--s4"], ["ebitda", "EBITDA margin", "--s1"], ["ebit", "EBIT margin", "--s2"], ["npat", "Net margin", "--s3"]]
+    .filter(([m]) => flowRows(m, freq).length);
+  const ends = inRange(rev);
+  if (state.range === "custom") fillCustom(rev);
+  rangeLine(ends, rev, freq === "Annual" ? "years" : "periods");
+  if (!ends.length) { $("#tiles").innerHTML = ""; noData("No margin data in this date range."); finTable(freq); return; }
+  showCanvas(); kill("main"); $("#growthCard").classList.add("hidden"); kill("growth");
+  const series = lines.map(([m, lab, col]) => {
+    const by = Object.fromEntries(flowRows(m, freq).map(r => [r.end, r.v]));
+    return { m, lab, col: css(col), data: ends.map(r => by[r.end] != null && r.v ? (by[r.end] / r.v) * 100 : null) };
+  });
+  const last = ends[ends.length - 1];
+  $("#tiles").innerHTML = series.slice(0, 4).map(s => {
+    const v = s.data[s.data.length - 1], prev = (() => { const i = ends.findIndex(r => r.end === addM(last.end, -12)); return i >= 0 ? s.data[i] : null; })();
+    const ch = v != null && prev != null ? v - prev : null;
+    return tile(`${s.lab} · ${last.label}`, v == null ? "–" : v.toFixed(1) + "%", ch == null ? "" : (ch >= 0 ? "+" : "") + ch.toFixed(1) + " pts YoY", dir(ch));
+  }).join("");
+  $("#chartTitle").textContent = `Margins · ${freq === "TTM" ? "trailing 12 months" : freq.toLowerCase()} · % of revenue`;
+  $("#legend").innerHTML = series.map(s => `<span><i style="background:${s.col}"></i>${s.lab}</span>`).join("");
+  $("#legend").classList.remove("hidden");
+  const opts = baseOpts("% of revenue");
+  opts.scales.y.ticks.callback = v => v + "%";
+  opts.scales.y.grid.color = ctx => ctx.tick.value === 0 ? css("--muted") : css("--grid");
+  opts.scales.x.ticks.autoSkip = ends.length > 28;
+  opts.plugins.tooltip.displayColors = true;
+  opts.plugins.tooltip.callbacks = { title: i => ends[i[0].dataIndex].label, label: i => `${series[i.datasetIndex].lab}: ${i.raw == null ? "–" : i.raw.toFixed(1) + "%"}` };
+  // direct labels at the line ends always; every point when "Show values" is on
+  opts.plugins.valueLabels = { display: true, fmt: v => v.toFixed(1) + "%", only: i => state.showVals || i === ends.length - 1 };
+  opts.layout = { padding: { top: 16, right: 8 } };
+  state.charts.main = new Chart($("#main"), {
+    type: "line",
+    data: { labels: ends.map(r => r.label), datasets: series.map(s => ({ label: s.lab, data: s.data, borderColor: s.col, backgroundColor: s.col,
+      borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, pointBackgroundColor: s.col, pointBorderColor: css("--surface"), pointBorderWidth: 2, tension: 0, spanGaps: true })) },
+    options: opts, plugins: [valueLabels],
+  });
+  $("#mainNote").textContent = "Margins use the same period's revenue. Net margin includes one-off items.";
+  finTable(freq);
+}
+
+// ----- financial summary table (periods across, metrics down)
+function finTable(freq) {
+  const f = freq === "Quarterly" ? "Half-yearly" : freq;
+  const rev = flowRows("revenue", f);
+  const endsAll = [...new Set([...rev.map(r => r.end), ...["ebitda", "npat"].flatMap(m => flowRows(m, f).map(r => r.end))])].sort();
+  const ends = inRange(endsAll.map(e => ({ end: e }))).map(r => r.end);
+  const flowBy = m => Object.fromEntries(flowRows(m, f).map(r => [r.end, r]));
+  const stockBy = m => Object.fromEntries(stockRowsRaw(m).map(r => [r.end, r]));
+  const lab = e => (flowRows("revenue", f).find(r => r.end === e) || {}).label || fmtYM(e);
+  const R = { receipts: flowBy("receipts"), revenue: flowBy("revenue"), gross: flowBy("gross"), ebitda: flowBy("ebitda"),
+    ebit: flowBy("ebit"), npat: flowBy("npat"), cash: stockBy("cash"), debt: stockBy("debt"), netdebt: stockBy("netdebt"), shares: stockBy("shares") };
+  const rawDebt = Object.fromEntries(((D().bal || {}).debt || []).map(r => [r.end, r]));
+  const lease = Object.fromEntries(((D().bal || {}).leases || []).map(r => [r.end, r]));
+  const allV = ends.flatMap(e => [R.revenue[e], R.receipts[e]].filter(Boolean).map(r => r.v));
+  const div = Math.max(0, ...allV.map(Math.abs)) >= 5e6 ? 1e6 : 1e3, unit = div === 1e6 ? "m" : "k";
+  const num = v => v == null ? "–" : (v / div).toLocaleString("en-AU", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const cell = (r, text) => {
+    if (!r) return `<td class="r cell">–</td>`;
+    const mk = r.chk === "verified" ? `<span class="mk ok">✓</span>` : r.chk === "differs" ? `<span class="mk bad">!</span>` : "";
+    const t = [r.basis && r.basis !== "reported" ? (r.basis === "override" ? "Your override" : "Derived: " + r.basis) : "Reported",
+      r.src, r.rel ? "released " + r.rel : "", r.chk === "verified" ? "✓ matches next report" : r.chk === "differs" ? "! next report differs" : ""].filter(Boolean).join(" · ");
+    return `<td class="r cell${r.doc ? " link" : ""}" ${r.doc ? `data-doc="${r.doc}"` : ""} title="${esc(t)}">${text}${mk}</td>`;
+  };
+  const rowsDef = [
+    ["Revenue", "revenue"], ["Receipts from customers", "receipts"], ["Gross profit", "gross"], ["EBITDA", "ebitda"], ["EBIT", "ebit"], ["Net income", "npat"],
+    ["sep"], ["Gross margin", "gross", "pct"], ["EBITDA margin", "ebitda", "pct"], ["EBIT margin", "ebit", "pct"], ["Net margin", "npat", "pct"],
+    ["sep"], ["Cash", "cash"], ["Borrowings", "rawdebt"], ["Lease liabilities", "lease"], ["Net debt" + (state.leases ? " (incl. leases)" : ""), "netdebt"], ["Shares (m)", "shares"],
+  ];
+  let html = `<thead><tr><th>${SYM[ccy()] || ""}${unit}</th>${ends.map(e => `<th class="r">${esc(lab(e))}</th>`).join("")}</tr></thead><tbody>`;
+  let sep = false;
+  for (const def of rowsDef) {
+    if (def[0] === "sep") { sep = true; continue; }
+    const [name, key, kind] = def;
+    let cells, any = false;
+    if (kind === "pct") {
+      cells = ends.map(e => { const a = R[key][e], b = R.revenue[e]; if (a && b && b.v) { any = true; return `<td class="r">${pctPlain(a.v / b.v)}</td>`; } return `<td class="r">–</td>`; });
+    } else {
+      const src = key === "rawdebt" ? rawDebt : key === "lease" ? lease : R[key];
+      cells = ends.map(e => { const r = src[e]; if (r) any = true; return cell(r, r ? (key === "shares" ? (r.v / 1e6).toFixed(1) : num(r.v)) : "–"); });
+    }
+    if (!any) continue;
+    html += `<tr class="${kind === "pct" ? "pct" : ""} ${sep ? "sep" : ""}"><td class="lab">${name}</td>${cells.join("")}</tr>`;
+    sep = false;
+  }
+  $("#dataTable").innerHTML = ends.length ? html + "</tbody>" : `<tbody><tr><td>No figures in this date range.</td></tr></tbody>`;
+  $("#dataTable").classList.add("fin");
+  $("#dataTable").querySelectorAll("td.link").forEach(td => td.onclick = () => window.open(asxLink(td.dataset.doc), "_blank", "noopener"));
+  $("#dataNote").innerHTML = `Periods: ${f.toLowerCase()} · <span class="mk ok">✓</span> = matches the comparative in the next report · ` +
+    `<span class="mk bad">!</span> = the next report shows a different number (often a restatement). Click a figure to open its filing.`;
+  state.csv = () => {
+    const rows = [["metric", ...ends.map(lab)]];
+    for (const [name, key, kind] of rowsDef.filter(d => d[0] !== "sep")) {
+      const src = key === "rawdebt" ? rawDebt : key === "lease" ? lease : R[key];
+      rows.push([name, ...ends.map(e => kind === "pct" ? (R[key][e] && R.revenue[e] && R.revenue[e].v ? (R[key][e].v / R.revenue[e].v).toFixed(4) : "") : (src[e] ? src[e].v : ""))]);
+    }
+    return { name: `${D().ticker}_financials_${f.toLowerCase()}.csv`, rows };
+  };
+}
+
+// ----- valuation view
+function availAt(rows, monthEnd) {
+  // latest row whose period ended and whose filing was public by monthEnd (no hindsight)
+  let best = null;
+  for (const r of rows) {
+    if (r.end > monthEnd.slice(0, 7)) continue;
+    const rel = r.rel || (addM(r.end, 2) + "-28");
+    if (rel <= monthEnd && (!best || r.end >= best.end)) best = r;
+  }
+  return best;
+}
+function inputsAt(monthEnd, asOf) {
+  const d = D(), ttm = m => m === "receipts" ? d.series.TTM : flowRows(m, "TTM");
+  const ref = (asOf || monthEnd).slice(0, 7);
+  const out = {};
+  for (const m of ["revenue", "ebitda", "ebit", "npat", "receipts"]) {
+    const r = availAt(ttm(m) || [], monthEnd);
+    out[m] = r && mdiff(r.end, ref) <= 15 ? r : null;
+  }
+  const b = d.bal || {};
+  for (const m of ["cash", "debt", "leases", "shares"]) {
+    const r = availAt(b[m] || [], monthEnd);
+    out[m] = r && mdiff(r.end, ref) <= 15 ? r : null;
+  }
+  return out;
+}
+function multiplesAt(price, inp, sharesOverride) {
+  const sh = sharesOverride || (inp.shares && inp.shares.v);
+  if (!price || !sh) return null;
+  const mc = price * sh;
+  const debt = (inp.debt ? inp.debt.v : 0) + (state.leases && inp.leases ? inp.leases.v : 0);
+  const ev = inp.cash || inp.debt ? mc + debt - (inp.cash ? inp.cash.v : 0) : null;
+  const res = { price, shares: sh, mc, ev, debt, cash: inp.cash ? inp.cash.v : null };
+  for (const [k, def] of Object.entries(MULTS)) {
+    const top = def.num === "mc" ? mc : ev, den = inp[def.den];
+    res[k] = top != null && den && den.v > 0 ? top / den.v : null;
+  }
+  return res;
+}
+function monthlyMultiples() {
+  const px = D().prices.monthly || [];
+  return px.map(([m, close]) => {
+    const inp = inputsAt(m + "-31");
+    const r = multiplesAt(close, inp);
+    return { end: m, label: fmtYM(m), close, inp, ...(r || {}) };
+  });
+}
+const median = a => { const s = [...a].sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
+function renderVal() {
+  const d = D(), last = d.prices.last;
+  const t = d.ticker;
+  const ov = state.price[t];
+  const price = ov != null ? ov : last.close;
+  if (document.activeElement !== $("#price")) $("#price").value = price;
+  $("#priceNote").textContent = ov != null ? "your price" : `last close, ${last.date}`;
+  $("#priceReset").classList.toggle("hidden", ov == null);
+  $("#leases").checked = state.leases;
+  $("#metrics").innerHTML = Object.entries(MULTS).map(([k, m]) => `<button data-m="${k}" class="${k === state.mult ? "on" : ""}">${m.label}</button>`).join("");
+  $("#metrics").querySelectorAll("button").forEach(b => b.onclick = () => { state.mult = b.dataset.m; render(); });
+
+  const all = monthlyMultiples();
+  if (state.range === "custom") fillCustom(all);
+  const rs = inRange(all);
+  rangeLine(rs, all, "months");
+  // current
+  const today = new Date().toISOString().slice(0, 10);
+  const nowInp = inputsAt(today, today);
+  const cur = multiplesAt(price, nowInp);
+  const def = MULTS[state.mult];
+  const vals = rs.map(r => r[state.mult]).filter(v => v != null && isFinite(v));
+  const mean = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null, med = median(vals);
+  const curV = cur ? cur[state.mult] : null;
+  const vsMean = curV != null && mean ? curV / mean - 1 : null;
+  $("#tiles").innerHTML =
+    tile("Market cap", cur ? money(cur.mc) : "–", cur ? `${(cur.shares / 1e6).toFixed(1)}m shares × ${price}` : "no share count yet") +
+    tile("Enterprise value", cur && cur.ev != null ? money(cur.ev) : "–", cur && cur.ev != null ? `net debt ${money(cur.debt - (cur.cash || 0))}${state.leases ? " incl. leases" : ""}` : "") +
+    tile(`${def.label} · now`, xf(curV), curV == null && nowInp[def.den] && nowInp[def.den].v <= 0 ? `negative ${def.denLabel}` : nowInp[def.den] ? `TTM to ${nowInp[def.den].label}` : "no data") +
+    tile(`${def.label} · range average`, xf(mean), mean != null ? `median ${xf(med)}` + (vsMean != null ? ` · now ${vsMean >= 0 ? "+" : ""}${(vsMean * 100).toFixed(0)}% vs mean` : "") : "");
+  // chart
+  kill("growth"); $("#growthCard").classList.add("hidden");
+  if (!vals.length) { noData(`No ${def.label} values in this range (needs positive ${def.denLabel} and a share count).`); }
+  else {
+    showCanvas(); kill("main");
+    const opts = baseOpts(def.label + " (x)");
+    opts.scales.x.ticks.autoSkip = true;
+    opts.scales.y.ticks.callback = v => v + "x";
+    opts.plugins.tooltip.callbacks = {
+      title: i => rs[i[0].dataIndex].label,
+      label: i => {
+        if (i.datasetIndex > 0) return null;
+        const r = rs[i.dataIndex]; if (r[state.mult] == null) return [`${def.label}: n/a`];
+        const den = r.inp[def.den];
+        return [`${def.label}: ${xf(r[state.mult])}`, `Price ${r.close.toFixed(r.close < 1 ? 3 : 2)} · mkt cap ${money(r.mc)}` + (def.num === "ev" ? ` · EV ${money(r.ev)}` : ""),
+          `TTM ${def.denLabel} ${money(den.v)} (to ${den.label}, released ${den.rel || "?"})`];
+      },
+    };
+    const yearEnd = String(fye()).padStart(2, "0");
+    opts.plugins.valueLabels = { display: state.showVals, fmt: v => v.toFixed(1) + "x", only: i => rs[i].end.endsWith("-" + yearEnd) };
+    const s1 = css("--s1"), muted = css("--muted");
+    state.charts.main = new Chart($("#main"), {
+      type: "line",
+      data: { labels: rs.map(r => r.label), datasets: [
+        { label: def.label, data: rs.map(r => r[state.mult] == null ? null : +r[state.mult].toFixed(2)), borderColor: s1, backgroundColor: s1, borderWidth: 2, pointRadius: 0, pointHoverRadius: 5, tension: 0, spanGaps: false },
+        { label: "Mean", data: rs.map(() => mean), borderColor: muted, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, noLabels: true },
+        { label: "Median", data: rs.map(() => med), borderColor: muted, borderDash: [2, 3], borderWidth: 1.5, pointRadius: 0, noLabels: true },
+      ] },
+      options: opts, plugins: [valueLabels],
+    });
+    $("#legend").innerHTML = `<span><i style="background:${s1}"></i>${def.label}, month-end</span><span><i class="dash"></i>Mean ${xf(mean)}</span><span><i class="dot"></i>Median ${xf(med)}</span>`;
+    $("#legend").classList.remove("hidden");
+  }
+  $("#chartTitle").textContent = `${def.label} over time · month-end price ÷ trailing 12 months`;
+  $("#mainNote").textContent = "Each month uses only figures already released by then (no hindsight). Months with negative earnings are left out of averages.";
+  // averages table
+  const rowsHtml = Object.entries(MULTS).map(([k, m]) => {
+    const v = rs.map(r => r[k]).filter(x => x != null && isFinite(x));
+    const mn = v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+    const now = cur ? cur[k] : null;
+    return `<tr><td class="lab">${m.label}</td><td class="r"><b>${xf(now)}</b></td><td class="r">${xf(mn)}</td><td class="r">${xf(median(v))}</td>` +
+      `<td class="r">${v.length ? xf(Math.min(...v)) : "–"}</td><td class="r">${v.length ? xf(Math.max(...v)) : "–"}</td>` +
+      `<td class="r">${now != null && mn ? pct(now / mn - 1, 0) : "–"}</td><td class="r">${v.length}/${rs.length}</td></tr>`;
+  }).join("");
+  $("#avgTitle").textContent = rs.length ? `Average multiples · ${rs[0].label} to ${rs[rs.length - 1].label}` : "Average multiples";
+  $("#avgTable").innerHTML = `<thead><tr><th>Multiple</th><th class="r">Now</th><th class="r">Mean</th><th class="r">Median</th><th class="r">Low</th><th class="r">High</th><th class="r">Now vs mean</th><th class="r">Months used</th></tr></thead><tbody>${rowsHtml}</tbody>`;
+  $("#avgNote").textContent = `"Now" uses ${ov != null ? "your price" : "the last close"} and the latest released figures. EV = market cap + borrowings ${state.leases ? "+ lease liabilities " : ""}− cash.` +
+    (d.prices.shares_now && cur && Math.abs(d.prices.shares_now / cur.shares - 1) > 0.1 ? ` Note: Yahoo shows ${(d.prices.shares_now / 1e6).toFixed(1)}m shares on issue now vs ${(cur.shares / 1e6).toFixed(1)}m in the last report, so there may have been a raise or buyback since.` : "");
+  // data table: monthly
+  $("#dataTable").classList.remove("fin");
+  $("#dataTable").innerHTML = `<thead><tr><th>Month</th><th class="r">Price</th><th class="r">Mkt cap</th><th class="r">EV</th>${Object.values(MULTS).map(m => `<th class="r">${m.label}</th>`).join("")}</tr></thead><tbody>` +
+    [...rs].reverse().map(r => `<tr><td>${r.label}</td><td class="r">${r.close.toFixed(r.close < 1 ? 3 : 2)}</td><td class="r">${money(r.mc)}</td><td class="r">${money(r.ev)}</td>` +
+      Object.keys(MULTS).map(k => `<td class="r">${xf(r[k])}</td>`).join("") + `</tr>`).join("") + "</tbody>";
+  $("#dataNote").textContent = "Month-end closing prices (adjusted for splits and consolidations) from Yahoo Finance.";
+  state.csv = () => ({ name: `${t}_multiples_monthly.csv`, rows: [["month", "price", "market_cap", "ev", ...Object.keys(MULTS)],
+    ...rs.map(r => [r.end, r.close, r.mc ?? "", r.ev ?? "", ...Object.keys(MULTS).map(k => r[k] ?? "")])] });
+}
+
+// ----- shared tables
+function dataTable(rs) {
+  $("#dataTable").classList.remove("fin");
+  $("#dataTable").innerHTML = `<thead><tr><th>Period</th><th class="r">Receipts</th><th class="r">YoY</th><th>Basis</th><th>Source</th></tr></thead><tbody>` +
+    [...rs].reverse().map(r => `<tr><td>${esc(r.label)}</td><td class="r">${money(r.v)}</td><td class="r">${pct(r.yoy)}</td>` +
+      `<td>${esc(r.basis)}</td><td>${r.doc ? `<a href="${asxLink(r.doc)}" target="_blank" rel="noopener">${esc(r.src || "ASX filing")}</a>` : esc(r.src)}</td></tr>`).join("") + "</tbody>";
+  $("#dataNote").textContent = "";
+  state.csv = () => ({ name: `${D().ticker}_receipts_${state.rfreq.toLowerCase()}.csv`, rows: [["period", "period_end", "receipts", "yoy", "basis", "source"],
+    ...rs.map(r => [r.label, r.end, r.v, r.yoy ?? "", r.basis, r.src || ""])] });
+}
 function renderDocs() {
-  const d = state.data;
-  const label = { parsed: "✓ read", no_data: "no receipts line", error: "couldn't open", pending: "waiting" };
+  const d = D();
+  const label = { parsed: "✓ read", no_data: "nothing found", error: "couldn't open", pending: "waiting" };
   $("#docTable").innerHTML = `<thead><tr><th>Released</th><th>Filing</th><th>Result</th></tr></thead><tbody>` +
     ((d && d.docs) || []).map(x => `<tr><td>${x.date}</td><td><a href="${asxLink(x.id)}" target="_blank" rel="noopener">${esc(x.title)}</a></td>` +
-      `<td title="${esc(x.note)}">${label[x.status] || x.status}</td></tr>`).join("") + "</tbody>";
+      `<td title="${esc(x.note)}">${label[x.status] || x.status}${x.fin ? ` · ${x.fin} financial figures` : ""}</td></tr>`).join("") + "</tbody>";
 }
-
 function switchTab(v) {
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
   $("#tab-data").classList.toggle("hidden", v !== "data");
@@ -492,30 +929,40 @@ function switchTab(v) {
 }
 
 // ---------------------------------------------------------- controls
-document.querySelectorAll("#freq button").forEach(b => b.onclick = () => { if (!b.disabled) { state.freq = b.dataset.v; render(); } });
+document.querySelectorAll("#views button").forEach(b => b.onclick = () => { if (!b.disabled) { state.view = b.dataset.v; render(); } });
+document.querySelectorAll("#freq button").forEach(b => b.onclick = () => {
+  if (b.disabled) return;
+  if (state.view === "receipts") state.rfreq = b.dataset.v; else state.ffreq = b.dataset.v;
+  render();
+});
 document.querySelectorAll("#range button").forEach(b => b.onclick = () => {
-  if (b.dataset.v === "custom" && state.range !== "custom") {  // start the custom range from what's on screen
-    const rs = rows(); state.from = rs.length ? rs[0].end : null; state.to = rs.length ? rs[rs.length - 1].end : null;
+  if (b.dataset.v === "custom" && state.range !== "custom") {
+    // start the custom range from what's on screen now
+    const rows = state.view === "val" ? monthlyMultiples() : state.view === "receipts" ? D().series[state.rfreq]
+      : metricRows(state.metric === "margins" ? "revenue" : state.metric, state.ffreq);
+    const cur = inRange(rows || []);
+    state.from = cur.length ? cur[0].end : null; state.to = cur.length ? cur[cur.length - 1].end : null;
   }
   state.range = b.dataset.v; render();
 });
 $("#from").onchange = () => { state.from = $("#from").value; if (state.to && state.from > state.to) state.to = state.from; render(); };
 $("#to").onchange = () => { state.to = $("#to").value; if (state.from && state.to < state.from) state.from = state.to; render(); };
-$("#showVals").onchange = () => {
-  state.showVals = $("#showVals").checked;
-  try { localStorage.setItem("showVals", state.showVals ? "1" : "0"); } catch (e) {}
-  render();
+$("#showVals").onchange = () => { state.showVals = $("#showVals").checked; store.set("showVals", state.showVals); render(); };
+$("#leases").onchange = () => { state.leases = $("#leases").checked; store.set("leases", state.leases); render(); };
+$("#price").oninput = () => {
+  const v = parseFloat($("#price").value);
+  if (v > 0) { state.price[D().ticker] = v; render(); }
 };
+$("#priceReset").onclick = () => { delete state.price[D().ticker]; $("#price").value = ""; render(); };
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => switchTab(b.dataset.v));
 $("#csv").onclick = () => {
-  const d = state.data, rs = rows();
-  const lines = [["period", "period_end", "receipts", "yoy", "basis", "source"].join(",")]
-    .concat(rs.map(r => [r.label, r.end, r.v, r.yoy ?? "", r.basis, `"${(r.src || "").replace(/"/g, "'")}"`].join(",")));
+  if (!state.csv) return;
+  const { name, rows } = state.csv();
+  const q = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-  a.download = `${d.ticker}_receipts_${state.freq.toLowerCase()}.csv`; a.click();
+  a.href = URL.createObjectURL(new Blob([rows.map(r => r.map(q).join(",")).join("\n")], { type: "text/csv" }));
+  a.download = name; a.click();
 };
-$("h1").style.cursor = "pointer";
 $("h1").onclick = () => { history.replaceState(null, "", location.pathname); $("#view").classList.add("hidden"); $("#home").classList.remove("hidden"); showChips(); };
 window.addEventListener("hashchange", () => location.hash.length > 1 && load(location.hash.slice(1)));
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.data && render());

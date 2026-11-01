@@ -17,7 +17,9 @@ import pymupdf
 LABEL = re.compile(
     r"(cash\s+)?receipts?\s+(received\s+)?from\s+(customers?|clients?|operations|patients|tenants|members|"
     r"sales|trade\s+debtors|debtors|contracts?\s+with\s+customers|operating\s+activities)"
-    r"|cash\s+receipts\s+in\s+the\s+course\s+of\s+operations|receipts\s+from\s+the\s+sale\s+of\s+goods",
+    r"|cash\s+receipts\s+in\s+the\s+course\s+of\s+operations|receipts\s+from\s+the\s+sale\s+of\s+goods"
+    # insurers: premiums collected play the role of customer receipts
+    r"|(gross\s+)?(insurance\s+)?premiums?\s+(received|receipts|collected)|receipts\s+from\s+policyholders",
     re.I,
 )
 # exclude rows that mention receipts but aren't customer receipts
@@ -49,9 +51,29 @@ def _to_number(tok: str) -> float | None:
     return -v if neg else v
 
 
+def _rotated_boxes(page) -> list[tuple]:
+    """Bounding boxes of text that isn't horizontal, e.g. the ASX's 'For personal use only' margin stamp."""
+    boxes = []
+    try:
+        for b in page.get_text("dict").get("blocks", []):
+            for ln in b.get("lines", []):
+                dx, dy = ln.get("dir", (1, 0))
+                if abs(dy) > 0.2:
+                    boxes.append(tuple(ln["bbox"]))
+    except Exception:  # noqa: BLE001
+        pass
+    return boxes
+
+
 def _rows(page) -> list[list[tuple]]:
-    """Group words into visual rows by vertical position."""
+    """Group words into visual rows by vertical position (ignoring rotated text)."""
     words = page.get_text("words")
+    rot = _rotated_boxes(page)
+    if rot:
+        def inside(w):
+            cx, cy = (w[0] + w[2]) / 2, (w[1] + w[3]) / 2
+            return any(b[0] - 1 <= cx <= b[2] + 1 and b[1] - 1 <= cy <= b[3] + 1 for b in rot)
+        words = [w for w in words if not inside(w)]
     words.sort(key=lambda w: ((w[1] + w[3]) / 2, w[0]))
     rows, cur, cur_y = [], [], None
     for w in words:
@@ -179,6 +201,40 @@ def _period_end_from_text(text: str, keywords: str) -> date | None:
     return None
 
 
+MAX_LAG_DAYS = 2400  # ~6.5 years: old reports are re-lodged when a company lists
+
+
+def title_period_end(title: str | None, kind: str) -> date | None:
+    """A date in the headline, e.g. 'Annual report - 30 June 2018' or 'FY18 Annual Report'."""
+    if not title:
+        return None
+    m = DATE_RE.search(_norm(title))
+    if m:
+        try:
+            return _parse_date(m)
+        except ValueError:
+            pass
+    m = re.search(r"\b(?:FY|HY|H1\s*FY|1H\s*FY)\s?'?(\d{2})\b", title, re.I)
+    if m:
+        y = 2000 + int(m.group(1))
+        if kind == "h":
+            return date(y - 1, 12, 31)
+        return date(y, 6, 30)
+    return None
+
+
+def resolve_period_end(found: date | None, kind: str, released: str, title: str | None = None) -> date:
+    """Trust the date printed in the document (even for old reports lodged at listing); then the
+    headline's date; only then guess from the release date."""
+    rel = datetime.strptime(released, "%Y-%m-%d").date()
+    if found and 0 <= (rel - found).days <= MAX_LAG_DAYS:
+        return found
+    t = title_period_end(title, kind)
+    if t and 0 <= (rel - t).days <= MAX_LAG_DAYS:
+        return t
+    return _quarter_end_before(released, lag_days=20 if kind != "q" else 10)
+
+
 def _quarter_end_before(released: str, lag_days: int = 10) -> date:
     d = datetime.strptime(released, "%Y-%m-%d").date() - timedelta(days=lag_days)
     for back in range(0, 120):
@@ -195,13 +251,13 @@ def _snap_to_month_end(d: date) -> date:
 
 
 # ---------------------------------------------------------------- public API
-def parse_pdf(data: bytes, kind: str, released: str) -> dict | None:
+def parse_pdf(data: bytes, kind: str, released: str, title: str | None = None) -> dict | None:
     """kind: 'q' quarterly, 'h' half-year, 'a' annual. Returns a data point or None."""
     doc = pymupdf.open(stream=data, filetype="pdf")
     try:
         if kind == "q":
             return _parse_quarterly(doc, released)
-        return _parse_report(doc, kind, released)
+        return _parse_report(doc, kind, released, title)
     finally:
         doc.close()
 
@@ -241,7 +297,7 @@ def _parse_quarterly(doc, released: str) -> dict | None:
     return None
 
 
-def _parse_report(doc, kind: str, released: str) -> dict | None:
+def _parse_report(doc, kind: str, released: str, title: str | None = None) -> dict | None:
     scored = []
     for p in range(doc.page_count):
         text = doc[p].get_text()
@@ -276,8 +332,7 @@ def _parse_report(doc, kind: str, released: str) -> dict | None:
               if kind == "h" else r"year\s+ended|financial\s+year\s+ended|period\s+ended|year\s+ending")
         end = _period_end_from_text(text, kw) or _period_end_from_text(
             "\n".join(doc[q].get_text() for q in range(min(4, doc.page_count))), kw)
-        if not end or not (0 <= (rel - end).days <= 400):
-            end = _quarter_end_before(released, lag_days=20)
+        end = resolve_period_end(end, kind, released, title)
         return {
             "period_end": _snap_to_month_end(end).isoformat(),
             "months": months,

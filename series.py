@@ -1,87 +1,96 @@
-"""Turns stored data points into quarterly, half-yearly, annual and trailing-12-month series."""
+"""Turns stored data points into quarterly, half-yearly, annual and trailing-12-month series.
+
+Every output row carries:
+  basis     reported / derived (and how)
+  released  the date the figure became public (latest filing it relies on), for no-hindsight multiples
+  check     'verified' / 'differs' / None  (cross-check against the next report's comparative)
+"""
 from __future__ import annotations
 
 import pandas as pd
 
 PRIORITY = {"import": 0, "asx": 1, "yahoo": 2}
+COLS = ["period_end", "months", "value", "currency", "source", "ids_id", "title", "released", "check"]
 
 
 def _clean(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
-        return df.assign(m=pd.Series(dtype="period[M]"))
+        return pd.DataFrame(columns=COLS + ["m"])
     d = df.copy()
+    for c in COLS:
+        if c not in d:
+            d[c] = None
     d["rank"] = d["source"].map(lambda s: PRIORITY.get(str(s).split(":")[0], 3))
-    d = d.sort_values("rank").drop_duplicates(["period_end", "months"], keep="first")
+    # among same-priority duplicates (e.g. 4E and Annual Report) keep the earliest release
+    d["_rel"] = d["released"].fillna("9999")
+    d = d.sort_values(["rank", "_rel"]).drop_duplicates(["period_end", "months"], keep="first")
     d["m"] = pd.PeriodIndex(pd.to_datetime(d["period_end"]), freq="M")
-    return d.sort_values("m").reset_index(drop=True)
+    return d.drop(columns=["_rel"]).sort_values("m").reset_index(drop=True)
 
 
-def _consecutive(ms: list, step: int) -> bool:
-    return all((b - a).n == step for a, b in zip(ms, ms[1:]))
+def _rel(*vals):
+    v = [x for x in vals if isinstance(x, str)]
+    return max(v) if v else None
 
 
 def fiscal_year_end_month(d: pd.DataFrame) -> int:
     a = d[d["months"] == 12]
     if not a.empty:
         return int(a["m"].dt.month.mode().iloc[0])
-    h = d[d["months"] == 6]
-    if not h.empty:  # halves end at FYE and FYE-6
-        months = set(h["m"].dt.month)
-        if 6 in months and 12 in months:
-            return 6  # most ASX companies are June year-end
-    return 6
+    return 6  # most ASX companies are June year-end
+
+
+def _row(r, **kw):
+    base = dict(value=r.value, currency=r.currency, basis="reported", source=r.source,
+                ids_id=r.ids_id, title=r.title, released=r.released, check=r.check)
+    base.update(kw)
+    return base
 
 
 def quarterly(d: pd.DataFrame) -> pd.DataFrame:
-    q = d[d["months"] == 3][["m", "value", "currency", "source", "ids_id", "title"]].copy()
-    q["basis"] = "reported"
-    return q
+    rows = [{"m": r.m, **_row(r)} for r in d[d["months"] == 3].itertuples()]
+    return pd.DataFrame(rows)
 
 
 def half_yearly(d: pd.DataFrame) -> pd.DataFrame:
-    rows = {r.m: dict(value=r.value, currency=r.currency, basis="reported", source=r.source,
-                      ids_id=r.ids_id, title=r.title)
-            for r in d[d["months"] == 6].itertuples()}
+    rows = {r.m: _row(r) for r in d[d["months"] == 6].itertuples()}
     # H2 = full year − H1
     for r in d[d["months"] == 12].itertuples():
         h1 = r.m - 6
         if r.m not in rows and h1 in rows:
-            rows[r.m] = dict(value=r.value - rows[h1]["value"], currency=r.currency,
-                             basis="derived: FY − H1", source=r.source, ids_id=r.ids_id,
-                             title=f"{r.title} less H1" if isinstance(r.title, str) else None)
-    # from two quarters
-    q = d[d["months"] == 3].set_index("m")["value"]
-    for m in q.index:
-        prev = m - 3
-        if m not in rows and prev in q.index and m.month in (6, 12, 3, 9):
-            fye = fiscal_year_end_month(d)
-            if m.month in (fye, (fye + 6 - 1) % 12 + 1):
-                rows[m] = dict(value=q[m] + q[prev], currency=d.loc[d["m"] == m, "currency"].iloc[0],
-                               basis="sum of 2 quarters", source="asx")
+            rows[r.m] = _row(r, value=r.value - rows[h1]["value"], basis="derived: FY − H1",
+                             title=f"{r.title} less H1" if isinstance(r.title, str) else None,
+                             released=_rel(r.released, rows[h1]["released"]), check=None)
+    # two quarters
+    fye = fiscal_year_end_month(d)
+    q = {r.m: r for r in d[d["months"] == 3].itertuples()}
+    for m, r in q.items():
+        prev = q.get(m - 3)
+        if m not in rows and prev is not None and m.month in (fye, (fye + 6 - 1) % 12 + 1):
+            rows[m] = _row(r, value=r.value + prev.value, basis="sum of 2 quarters",
+                           released=_rel(r.released, prev.released), check=None)
     out = pd.DataFrame([{"m": k, **v} for k, v in rows.items()])
     return out.sort_values("m").reset_index(drop=True) if not out.empty else out
 
 
 def annual(d: pd.DataFrame) -> pd.DataFrame:
     fye = fiscal_year_end_month(d)
-    rows = {r.m: dict(value=r.value, currency=r.currency, basis="reported", source=r.source,
-                      ids_id=r.ids_id, title=r.title)
-            for r in d[d["months"] == 12].itertuples()}
-    q = d[d["months"] == 3].set_index("m")["value"]
-    for m in q.index:
+    rows = {r.m: _row(r) for r in d[d["months"] == 12].itertuples()}
+    q = {r.m: r for r in d[d["months"] == 3].itertuples()}
+    for m, r in q.items():
         if m.month != fye or m in rows:
             continue
-        span = [m - 9, m - 6, m - 3, m]
-        if all(x in q.index for x in span):
-            rows[m] = dict(value=float(sum(q[x] for x in span)), currency="AUD",
-                           basis="sum of 4 quarters", source="asx")
+        span = [q.get(m - k) for k in (9, 6, 3, 0)]
+        if all(x is not None for x in span):
+            rows[m] = _row(r, value=float(sum(x.value for x in span)), basis="sum of 4 quarters",
+                           released=_rel(*[x.released for x in span]), check=None)
     h = half_yearly(d)
     if not h.empty:
-        hs = h.set_index("m")["value"]
-        for m in hs.index:
-            if m.month == fye and m not in rows and (m - 6) in hs.index:
-                rows[m] = dict(value=float(hs[m] + hs[m - 6]), currency="AUD",
-                               basis="H1 + H2", source="asx")
+        hs = {r.m: r for r in h.itertuples()}
+        for m, r in hs.items():
+            if m.month == fye and m not in rows and (m - 6) in hs:
+                rows[m] = _row(r, value=float(r.value + hs[m - 6].value), basis="H1 + H2",
+                               released=_rel(r.released, hs[m - 6].released), check=None)
     out = pd.DataFrame([{"m": k, **v} for k, v in rows.items()])
     if out.empty:
         return out
@@ -91,39 +100,45 @@ def annual(d: pd.DataFrame) -> pd.DataFrame:
 
 
 def ttm(d: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    q = d[d["months"] == 3].set_index("m")["value"].sort_index()
-    for m in q.index:
-        span = [m - 9, m - 6, m - 3, m]
-        if all(x in q.index for x in span):
-            rows.append({"m": m, "value": float(sum(q[x] for x in span)), "basis": "4 quarters"})
-    have = {r["m"] for r in rows}
+    rows = {}
+    q = {r.m: r for r in d[d["months"] == 3].itertuples()}
+    for m in sorted(q):
+        span = [q.get(m - k) for k in (9, 6, 3, 0)]
+        if all(x is not None for x in span):
+            rows[m] = {"value": float(sum(x.value for x in span)), "basis": "4 quarters",
+                       "released": _rel(*[x.released for x in span]), "ids_id": q[m].ids_id, "title": q[m].title}
+    for r in d[d["months"] == 12].itertuples():
+        if r.m not in rows:
+            rows[r.m] = {"value": float(r.value), "basis": "full year", "released": r.released,
+                         "ids_id": r.ids_id, "title": r.title}
     h = half_yearly(d)
     if not h.empty:
-        hs = h.set_index("m")["value"]
-        for m in hs.index:
-            if m not in have and (m - 6) in hs.index:
-                rows.append({"m": m, "value": float(hs[m] + hs[m - 6]), "basis": "2 halves"})
-    out = pd.DataFrame(rows)
+        hs = {r.m: r for r in h.itertuples()}
+        for m, r in hs.items():
+            if m not in rows and (m - 6) in hs:
+                rows[m] = {"value": float(r.value + hs[m - 6].value), "basis": "2 halves",
+                           "released": _rel(r.released, hs[m - 6].released), "ids_id": r.ids_id, "title": r.title}
+    out = pd.DataFrame([{"m": k, **v} for k, v in rows.items()])
     return out.sort_values("m").reset_index(drop=True) if not out.empty else out
 
 
 def build(points: pd.DataFrame) -> dict[str, pd.DataFrame]:
     d = _clean(points)
     if d.empty:
-        empty = pd.DataFrame()
-        return {"Quarterly": empty, "Half-yearly": empty, "Annual": empty, "TTM": empty, "clean": d}
+        e = pd.DataFrame()
+        return {"Quarterly": e, "Half-yearly": e, "Annual": e, "TTM": e, "clean": d}
     return {"Quarterly": quarterly(d), "Half-yearly": half_yearly(d), "Annual": annual(d),
             "TTM": ttm(d), "clean": d}
 
 
-def add_growth(df: pd.DataFrame, periods_per_year: int) -> pd.DataFrame:
-    """Year-on-year growth, matched on calendar month 12 months earlier."""
+def add_growth(df: pd.DataFrame, periods_per_year: int = 1) -> pd.DataFrame:
+    """Year-on-year growth, matched on the calendar month 12 months earlier."""
     if df.empty:
         return df
     s = df.set_index("m")["value"]
     df = df.copy()
-    df["yoy"] = [((s[m] / s[m - 12]) - 1) if (m - 12) in s.index and s[m - 12] else None for m in df["m"]]
+    df["yoy"] = [((s[m] / s[m - 12]) - 1) if (m - 12) in s.index and s[m - 12] and s[m - 12] > 0 else None
+                 for m in df["m"]]
     return df
 
 
@@ -135,9 +150,8 @@ def cagr(ann: pd.DataFrame, years: int = 5) -> tuple[float, str] | None:
     end = s.index.max()
     start = end - 12 * years
     if start not in s.index or s[start] <= 0 or s[end] <= 0:
-        # fall back to the longest available span up to `years`
         cands = [m for m in s.index if m < end and s[m] > 0 and (end - m).n <= 12 * years]
-        if not cands:
+        if not cands or s[end] <= 0:
             return None
         start = min(cands)
     n = (end - start).n / 12
