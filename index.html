@@ -80,7 +80,20 @@ a { color: var(--accent); }
   border-radius: 999px; padding: 4px 12px; cursor: pointer; }
 .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 .hidden { display: none !important; }
+.custom { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-2); }
+.custom select { font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); }
+.switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); cursor: pointer; user-select: none; margin-left: auto; }
+.switch input { appearance: none; width: 34px; height: 20px; border-radius: 999px; background: var(--border); position: relative; cursor: pointer; transition: background .15s; margin: 0; }
+.switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.switch input:checked { background: var(--accent); }
+.switch input:checked::after { left: 16px; }
+.rangeinfo { font-size: 13px; color: var(--muted); margin: -6px 0 12px; }
+.stale { background: var(--accent-soft); color: var(--text); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin: 0 0 12px; }
+.stale button { font: inherit; font-size: 13px; border: 0; background: var(--accent); color: #fff; border-radius: 7px; padding: 4px 10px; margin-left: 8px; cursor: pointer; }
+.nodata { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-2); font-size: 14px; text-align: center; padding: 0 16px; }
 @media (max-width: 720px) {
+  .switch { margin-left: 0; }
   .tiles { grid-template-columns: repeat(2, 1fr); }
   .chart { height: 300px; }
   .tile .v { font-size: 20px; }
@@ -114,11 +127,19 @@ a { color: var(--accent); }
           <button data-v="Annual">Annual</button><button data-v="TTM">TTM</button>
         </div>
         <div class="seg" id="range">
-          <button data-v="5">5y</button><button data-v="10">10y</button><button data-v="99">All</button>
+          <button data-v="3">3y</button><button data-v="5">5y</button><button data-v="10">10y</button>
+          <button data-v="all">All</button><button data-v="custom">Custom</button>
         </div>
+        <div class="custom hidden" id="customBox">
+          <label for="from">From</label><select id="from"></select>
+          <label for="to">to</label><select id="to"></select>
+        </div>
+        <label class="switch"><input type="checkbox" id="showVals"> Show values</label>
       </div>
+      <div class="rangeinfo" id="rangeInfo"></div>
+      <div id="stale"></div>
       <div class="tiles" id="tiles"></div>
-      <div class="card"><h3 id="chartTitle">Receipts from customers</h3><div class="chart"><canvas id="main"></canvas></div>
+      <div class="card"><h3 id="chartTitle">Receipts from customers</h3><div class="chart"><canvas id="main"></canvas><div class="nodata hidden" id="noData"></div></div>
         <div class="note" id="mainNote"></div></div>
       <div class="card" id="growthCard"><h3>Growth vs the same period a year earlier</h3>
         <div class="chart small"><canvas id="growth"></canvas></div></div>
@@ -133,7 +154,15 @@ a { color: var(--accent); }
 <script>
 const $ = s => document.querySelector(s);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-const state = { companies: [], byCode: {}, data: null, freq: "Quarterly", range: 10, charts: {} };
+const state = { companies: [], byCode: {}, data: null, freq: "Quarterly", range: "10", from: null, to: null, charts: {}, showVals: false };
+try { state.showVals = localStorage.getItem("showVals") === "1"; } catch (e) {}
+const FREQS = ["Quarterly", "Half-yearly", "Annual", "TTM"];
+const ym = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const mdiff = (a, b) => { const [ay, am] = a.split("-").map(Number), [by, bm] = b.split("-").map(Number); return (by - ay) * 12 + (bm - am); };
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const fmtYM = e => { const [y, m] = e.split("-").map(Number); return MON[m - 1] + "-" + String(y).slice(2); };
+const lastEnd = f => { const s = state.data.series[f] || []; return s.length ? s[s.length - 1].end : null; };
+const latestAny = () => ["Quarterly", "Half-yearly", "Annual"].map(lastEnd).filter(Boolean).sort().pop();
 const SYM = { AUD: "A$", USD: "US$", NZD: "NZ$", CAD: "C$", GBP: "£" };
 
 // Link to the GitHub Actions page for "load now" (works when hosted at user.github.io/repo/)
@@ -247,7 +276,11 @@ async function load(t) {
     let recent = JSON.parse(localStorage.getItem("recent") || "[]").filter(x => x !== t);
     localStorage.setItem("recent", JSON.stringify([t, ...recent].slice(0, 8)));
   } catch (e) {}
-  if (!data.series[state.freq].length) state.freq = ["Quarterly", "Half-yearly", "Annual", "TTM"].find(f => data.series[f].length);
+  // if the chosen frequency stops well before the latest data (e.g. company stopped lodging 4Cs), use a current one
+  const latest = latestAny();
+  const fresh = f => lastEnd(f) && mdiff(lastEnd(f), latest) < 6;
+  if (!fresh(state.freq)) state.freq = ["Quarterly", "Half-yearly", "Annual", "TTM"].find(fresh) || FREQS.find(f => data.series[f].length);
+  if (state.range === "custom") state.range = "10";
   if (data.currencies.length > 1) $("#banner").innerHTML = `<div class="banner">This company has reported in more than one currency ` +
     `(${data.currencies.join(", ")}). Figures are shown as reported, without FX conversion.</div>`;
   render();
@@ -258,11 +291,23 @@ function showCharts() { ["#tiles", ".controls", ".card:has(#main)", "#growthCard
 // ---------------------------------------------------------- render
 function rows() {
   const all = state.data.series[state.freq] || [];
-  if (state.range >= 99 || !all.length) return all;
-  const last = all[all.length - 1].end;
-  const [y, m] = last.split("-").map(Number);
-  const cut = `${y - state.range}-${String(m).padStart(2, "0")}`;
+  if (!all.length || state.range === "all") return all;
+  if (state.range === "custom") return all.filter(r => (!state.from || r.end >= state.from) && (!state.to || r.end <= state.to));
+  const now = new Date();
+  const cut = ym(new Date(now.getFullYear() - Number(state.range), now.getMonth(), 1));  // measured back from today
   return all.filter(r => r.end > cut);
+}
+
+function fillCustom() {
+  const all = state.data.series[state.freq] || [];
+  const opts = all.map(r => `<option value="${r.end}">${esc(r.label)}</option>`).join("");
+  $("#from").innerHTML = opts; $("#to").innerHTML = opts;
+  const pick = (want, fallback) => (all.find(r => r.end >= want) || fallback || {}).end;
+  if (all.length) {
+    $("#from").value = pick(state.from || all[0].end, all[0]);
+    const toCand = [...all].reverse().find(r => r.end <= (state.to || "9999-12")) || all[all.length - 1];
+    $("#to").value = toCand.end;
+  }
 }
 
 function render() {
@@ -271,8 +316,38 @@ function render() {
     b.classList.toggle("on", b.dataset.v === state.freq);
     b.disabled = !d.series[b.dataset.v].length; b.style.opacity = b.disabled ? .4 : 1;
   });
-  document.querySelectorAll("#range button").forEach(b => b.classList.toggle("on", +b.dataset.v === state.range));
+  document.querySelectorAll("#range button").forEach(b => b.classList.toggle("on", b.dataset.v === state.range));
+  $("#customBox").classList.toggle("hidden", state.range !== "custom");
+  if (state.range === "custom") fillCustom();
+  $("#showVals").checked = state.showVals;
   const rs = rows();
+  const all = d.series[state.freq] || [];
+  // date range shown
+  const fname = { Quarterly: "quarters", "Half-yearly": "half-years", Annual: "years", TTM: "trailing-12-month points" }[state.freq];
+  $("#rangeInfo").textContent = rs.length
+    ? `Showing ${rs[0].label} to ${rs[rs.length - 1].label} · ${rs.length} ${rs.length === 1 ? fname.replace(/s$/, "") : fname}` +
+      (all.length ? ` · ${state.freq.toLowerCase()} data available ${all[0].label} to ${all[all.length - 1].label}` : "")
+    : "";
+  // explain when this frequency stops before the latest data
+  const latest = latestAny(), le = lastEnd(state.freq);
+  $("#stale").innerHTML = "";
+  if (le && latest && mdiff(le, latest) >= 6) {
+    const alt = ["Quarterly", "Half-yearly", "Annual"].find(f => lastEnd(f) && mdiff(lastEnd(f), latest) < 6);
+    const why = state.freq === "Quarterly" ? ` ${esc(d.ticker)} stopped lodging quarterly 4C cash flow reports after that.` : "";
+    $("#stale").innerHTML = `<div class="stale">The latest ${state.freq.toLowerCase()} figure is <b>${fmtYM(le)}</b>.${why}` +
+      (alt ? ` ${alt} figures run to <b>${fmtYM(lastEnd(alt))}</b>.<button data-f="${alt}">Show ${alt.toLowerCase()}</button>` : "") + `</div>`;
+    const btn = $("#stale button"); if (btn) btn.onclick = () => { state.freq = btn.dataset.f; render(); };
+  }
+  if (!rs.length) {
+    $("#tiles").innerHTML = "";
+    ["main", "growth"].forEach(k => { if (state.charts[k]) { state.charts[k].destroy(); state.charts[k] = null; } });
+    $("#main").classList.add("hidden"); $("#noData").classList.remove("hidden");
+    $("#noData").textContent = `No ${state.freq.toLowerCase()} figures in this date range.`;
+    $("#growthCard").classList.add("hidden"); $("#mainNote").textContent = "";
+    renderTable(rs, ccy); renderDocs();
+    return;
+  }
+  $("#main").classList.remove("hidden"); $("#noData").classList.add("hidden");
   // tiles
   const last = rs[rs.length - 1], ttm = d.series.TTM, tl = ttm[ttm.length - 1];
   const tile = (k, v, dl, cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="d ${cls}">${dl || "&nbsp;"}</div></div>`;
@@ -295,6 +370,39 @@ function render() {
   renderTable(rs, ccy); renderDocs();
 }
 
+// draws each bar's / point's value on the chart when "Show values" is on
+const valueLabels = {
+  id: "valueLabels",
+  afterDatasetsDraw(chart, _args, o) {
+    if (!o || !o.display) return;
+    const { ctx } = chart, meta = chart.getDatasetMeta(0), vals = chart.data.datasets[0].data;
+    if (!meta.data.length) return;
+    const w = meta.data[0].width || (chart.chartArea.width / meta.data.length);
+    ctx.save();
+    ctx.font = "500 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif";
+    ctx.fillStyle = css("--text-2");
+    const texts = vals.map(o.fmt);
+    const widest = Math.max(...texts.map(t => ctx.measureText(t).width));
+    const rotate = widest > w + 6 && widest > (chart.chartArea.width / meta.data.length) - 2;
+    meta.data.forEach((el, i) => {
+      const v = vals[i]; if (v == null) return;
+      const neg = v < 0, t = texts[i];
+      ctx.save();
+      if (rotate) {
+        ctx.translate(el.x, neg ? el.y + 4 : el.y - 4);
+        ctx.rotate(-Math.PI / 2);
+        ctx.textAlign = neg ? "right" : "left"; ctx.textBaseline = "middle";
+        ctx.fillText(t, 0, 0);
+      } else {
+        ctx.textAlign = "center"; ctx.textBaseline = neg ? "top" : "bottom";
+        ctx.fillText(t, el.x, neg ? el.y + 4 : el.y - 4);
+      }
+      ctx.restore();
+    });
+    ctx.restore();
+  },
+};
+
 function baseOpts(unitLabel) {
   const tc = css("--text-2"), grid = css("--grid");
   return {
@@ -315,6 +423,10 @@ function drawMain(rs, div, unit, ccy) {
   const isLine = state.freq === "TTM";
   const opts = baseOpts(unit);
   opts.scales.y.beginAtZero = true;
+  opts.scales.x.ticks.autoSkip = rs.length > 28;  // label every period unless it gets crowded
+  const dp = Math.max(...rs.map(r => Math.abs(r.v / div))) < 100 ? 1 : 0;
+  opts.plugins.valueLabels = { display: state.showVals, fmt: v => v.toLocaleString("en-AU", { minimumFractionDigits: dp, maximumFractionDigits: dp }) };
+  if (state.showVals) opts.scales.y.grace = rs.length > 24 ? "22%" : "10%";
   opts.plugins.tooltip.callbacks = {
     title: items => rs[items[0].dataIndex].label,
     label: item => {
@@ -334,7 +446,7 @@ function drawMain(rs, div, unit, ccy) {
       borderRadius: 4, borderSkipped: "start", maxBarThickness: 24, categoryPercentage: .8, barPercentage: .7,
       borderWidth: isLine ? 2 : 0, pointRadius: isLine ? 3 : 0, pointHoverRadius: 6, pointBackgroundColor: accent, tension: 0,
     }] },
-    options: opts,
+    options: opts, plugins: [valueLabels],
   });
 }
 
@@ -345,14 +457,17 @@ function drawGrowth(rs) {
   if (!g.length) return;
   const opts = baseOpts("");
   opts.scales.y.ticks.callback = v => v + "%";
+  opts.scales.x.ticks.autoSkip = g.length > 28;
   opts.scales.y.grid.color = ctx => ctx.tick.value === 0 ? css("--muted") : css("--grid");
   opts.plugins.tooltip.callbacks = { title: i => g[i[0].dataIndex].label, label: i => pct(g[i.dataIndex].yoy) + " vs same period a year earlier" };
+  opts.plugins.valueLabels = { display: state.showVals, fmt: v => (v > 0 ? "+" : "") + v.toFixed(0) + "%" };
+  if (state.showVals) opts.scales.y.grace = g.length > 24 ? "35%" : "15%";
   state.charts.growth = new Chart($("#growth"), {
     type: "bar",
     data: { labels: g.map(r => r.label), datasets: [{ data: g.map(r => +(r.yoy * 100).toFixed(1)),
       backgroundColor: g.map(r => r.yoy >= 0 ? css("--pos") : css("--neg")),
       borderRadius: 4, borderSkipped: "start", maxBarThickness: 24, categoryPercentage: .8, barPercentage: .7 }] },
-    options: opts,
+    options: opts, plugins: [valueLabels],
   });
 }
 
@@ -378,7 +493,19 @@ function switchTab(v) {
 
 // ---------------------------------------------------------- controls
 document.querySelectorAll("#freq button").forEach(b => b.onclick = () => { if (!b.disabled) { state.freq = b.dataset.v; render(); } });
-document.querySelectorAll("#range button").forEach(b => b.onclick = () => { state.range = +b.dataset.v; render(); });
+document.querySelectorAll("#range button").forEach(b => b.onclick = () => {
+  if (b.dataset.v === "custom" && state.range !== "custom") {  // start the custom range from what's on screen
+    const rs = rows(); state.from = rs.length ? rs[0].end : null; state.to = rs.length ? rs[rs.length - 1].end : null;
+  }
+  state.range = b.dataset.v; render();
+});
+$("#from").onchange = () => { state.from = $("#from").value; if (state.to && state.from > state.to) state.to = state.from; render(); };
+$("#to").onchange = () => { state.to = $("#to").value; if (state.from && state.to < state.from) state.from = state.to; render(); };
+$("#showVals").onchange = () => {
+  state.showVals = $("#showVals").checked;
+  try { localStorage.setItem("showVals", state.showVals ? "1" : "0"); } catch (e) {}
+  render();
+};
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => switchTab(b.dataset.v));
 $("#csv").onclick = () => {
   const d = state.data, rs = rows();
