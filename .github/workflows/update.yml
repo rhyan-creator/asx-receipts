@@ -1,0 +1,50 @@
+name: Update data
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Tickers to load right now, separated by spaces (leave blank for a normal run)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Fetch new filings and load history
+        run: |
+          git config user.name "receipts-bot"
+          git config user.email "receipts-bot@users.noreply.github.com"
+          python -m scraper.update --budget-min ${{ github.event.inputs.tickers != '' && '0' || '150' }} --tickers ${{ github.event.inputs.tickers }}
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deploy
+        uses: actions/deploy-pages@v4
