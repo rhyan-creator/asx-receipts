@@ -1,6 +1,10 @@
 name: Update data
 
 on:
+  schedule:
+    # every day at ~9:17am Melbourne (22:17 UTC). Until the whole ASX is loaded it does a full run each day;
+    # after that it only does real work on Saturdays (the other days it checks and stops within a minute).
+    - cron: "17 22 * * *"
   workflow_dispatch:
     inputs:
       tickers:
@@ -44,7 +48,7 @@ jobs:
         run: |
           git config user.name "receipts-bot"
           git config user.email "receipts-bot@users.noreply.github.com"
-          python -m scraper.update --budget-min ${{ github.event.inputs.tickers != '' && '0' || '150' }} --tickers ${{ github.event.inputs.tickers }}
+          python -m scraper.update --budget-min ${{ github.event.inputs.tickers != '' && '0' || '150' }} ${{ github.event_name == 'schedule' && '--weekly-after-backfill' || '' }} --tickers ${{ github.event.inputs.tickers }}
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
