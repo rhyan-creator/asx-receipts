@@ -972,7 +972,8 @@ function renderDocs() {
   const label = { parsed: "✓ read", no_data: "nothing found", error: "couldn't open", pending: "waiting" };
   $("#docTable").innerHTML = `<thead><tr><th>Released</th><th>Filing</th><th>Result</th></tr></thead><tbody>` +
     ((d && d.docs) || []).map(x => `<tr><td>${x.date}</td><td><a href="${asxLink(x.id)}" target="_blank" rel="noopener">${esc(x.title)}</a></td>` +
-      `<td title="${esc(x.note)}">${label[x.status] || x.status}${x.fin ? ` · ${x.fin} financial figures` : ""}` +
+      `<td title="${esc(x.note)}">${x.status === "no_data" && /appendix\s*4[de]\b/i.test(x.title) && !/annual|half|interim|financial report/i.test(x.title)
+        ? "results summary only (figures come from the full report)" : (label[x.status] || x.status)}${x.fin ? ` · ${x.fin} financial figures` : ""}` +
       `${x.err ? ` · <span style="color:var(--neg)">${esc(x.err)} (will retry)</span>` : ""}` +
       `${x.miss && x.miss.length ? ` · <span style="color:var(--warn)">couldn't find: ${x.miss.map(m => ({ npat: "net income", ebit: "EBIT", revenue: "revenue", cash: "cash", shares: "shares" }[m] || m)).join(", ")}</span>` : ""}</td></tr>`).join("") + "</tbody>";
 }

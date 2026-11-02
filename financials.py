@@ -40,10 +40,10 @@ L = {
                            r"depreciation,\s*amortisation\s*(and|&)\s*impairment|depreciation\s+and\s+amortisation\s+expenses?)", re.I),
     "da_part": re.compile(r"^(depreciation|amortisation)\b(?!.*accumulated)", re.I),
     "cash": re.compile(r"^cash\s+(and\s+cash\s+equivalents|and\s+short[- ]term\s+deposits|at\s+bank(\s+and\s+(on\s+hand|in\s+hand))?|assets)\b", re.I),
-    "borrow": re.compile(r"^(interest[- ]bearing\s+)?(loans\s+and\s+)?borrowings|^interest[- ]bearing\s+(loans|liabilities)|"
+    "borrow": re.compile(r"^((non[- ])?current\s+)?(interest[- ]bearing\s+)?(loans\s+and\s+)?borrowings|^interest[- ]bearing\s+(loans|liabilities)|"
                          r"^bank\s+(loans?|overdrafts?|facilit)|^loans\s+(payable|from)|^convertible\s+notes?|^notes\s+payable|"
                          r"^debt\b|^financial\s+liabilities\s*-?\s*borrowings", re.I),
-    "lease": re.compile(r"^lease\s+liabilit|^right[- ]of[- ]use\s+(lease\s+)?liabilit|^leases?\b(?!.*receivable)", re.I),
+    "lease": re.compile(r"^((non[- ])?current\s+)?lease\s+liabilit|^right[- ]of[- ]use\s+(lease\s+)?liabilit|^leases?\b(?!.*receivable)", re.I),
     "equity": re.compile(r"^total\s+(equity|shareholders'?\s+equity)\b", re.I),
     "eps": re.compile(r"basic\s+(and\s+diluted\s+)?(earnings|\(loss\)|loss|profit)?\s*(/\s*\(loss\)\s*)?(per\s+share|eps)|"
                       r"basic\s+eps|earnings\s+per\s+share\s*-?\s*basic", re.I),
@@ -60,8 +60,53 @@ def _label_text(row) -> str:
     return _norm(" ".join(w[4] for w in row if not NUM.match(_norm(w[4])) or re.search(r"[a-z]", w[4], re.I)))
 
 
-def _values(rows, i) -> list[float]:
-    """Numbers to the right of the label on row i (or a continuation row), note column removed."""
+_COL_CACHE: dict[int, list[float] | None] = {}
+COL_HEAD = re.compile(r"^(\$|a\$|us\$)?'?000s?$|^\$$|^\$m$|^20\d\d$|^cents$", re.I)
+
+
+def _columns(rows) -> list[float] | None:
+    """Right edges of the value columns, from the header row ("$'000  $'000" or "2026  2025").
+    Numbers in these statements are right-aligned under their header."""
+    key = id(rows)
+    if key in _COL_CACHE:
+        return _COL_CACHE[key]
+    cols = None
+    for row in rows[:40]:
+        heads = [w for w in row if COL_HEAD.match(_norm(w[4]).strip())]
+        if len(heads) >= 2:
+            cols = sorted(w[2] for w in heads)
+            break
+    _COL_CACHE[key] = cols
+    return cols
+
+
+def _by_columns(row, cols) -> list[float] | None:
+    """Pick the number sitting under each value column; anything else (note refs like '4, 26') is ignored."""
+    nums = [w for w in row if NUM.match(_norm(w[4]).strip(",")) and not re.search(r"[a-z]", w[4], re.I)]
+    out = []
+    for cx in cols[:2]:
+        best = min(nums, key=lambda w: abs(w[2] - cx), default=None)
+        if best is None or abs(best[2] - cx) > 28:
+            break
+        v = _to_number(_norm(best[4]))
+        if v is None:
+            break
+        out.append(v)
+    return out or None
+
+
+def _values(rows, i, use_cols: bool = True) -> list[float]:
+    """Numbers to the right of the label on row i (or a continuation row), note column removed.
+    Share-count notes use 'Number' columns rather than $'000, so they skip the column matching."""
+    cols = _columns(rows) if use_cols else None
+    if cols:
+        for j in range(i, min(i + 3, len(rows))):
+            if j > i and len([w for w in rows[j] if re.search(r"[a-z]", w[4], re.I)]) > 6:
+                break
+            got = _by_columns(rows[j], cols)
+            if got:
+                return got
+        return []
     row = rows[i]
     alpha = [w for w in row if re.search(r"[a-z]", w[4], re.I)]
     x0 = alpha[-1][2] + 1 if alpha else 0.0
@@ -91,7 +136,7 @@ def _values(rows, i) -> list[float]:
     return out
 
 
-def _find(rows, pat, excl=EXCL, start_only=True, all_matches=False):
+def _find(rows, pat, excl=EXCL, start_only=True, all_matches=False, use_cols=True):
     hits = []
     for i, row in enumerate(rows):
         lab = _label_text(row).strip()
@@ -99,7 +144,7 @@ def _find(rows, pat, excl=EXCL, start_only=True, all_matches=False):
         m = pat.search(lab_clean) if not start_only else pat.match(lab_clean)
         if not m or (excl and excl.search(lab_clean)):
             continue
-        vals = _values(rows, i)
+        vals = _values(rows, i, use_cols)
         if not vals:
             continue
         hits.append((lab_clean, vals))
@@ -198,8 +243,26 @@ def _issued_shares(rows) -> list[float] | None:
                 return picks + [None] * (2 - len(picks))
         elif len(vals) in (1, 2) and re.search(r"shares", lab, re.I) and abs(vals[0][1]) >= 1e5:
             return [abs(v) for _, v in vals] + [None] * (2 - len(vals))
+    # tables headed "Number of shares" (possibly over several lines) vs "$'000": read the closing balance
+    # only from a number-of-shares section
+    mode, thousands = None, False
+    for i, row in enumerate(rows):
+        txt = _norm(" ".join(w[4] for w in row)).lower()
+        toks = [_norm(w[4]).lower().strip() for w in row]
+        if "number" in toks or "no." in toks or "of shares" in txt or re.search(r"\bno\.\s*of\b", txt):
+            mode, thousands = "num", thousands or bool(re.search(r"'000|\(000\)|thousands", txt))
+            continue
+        if any(COL_HEAD.match(t) for t in toks) and not re.search(r"number|shares", txt):
+            mode, thousands = "$", False
+            continue
+        lab = _label_text(row).strip()
+        if mode == "num" and END_ROW.search(lab) and not re.search(r"option|right|performance", lab, re.I):
+            vals = _values(rows, i, use_cols=False)
+            if vals and abs(vals[0]) >= 1e4:
+                k = 1000 if thousands and abs(vals[0]) < 1e7 else 1
+                return [abs(v) * k for v in vals] + [None] * (2 - len(vals))
     # older style: a single "Ordinary shares - fully paid  125,500,000  124,000,000" line
-    for lab, vals in _find(rows, L["issued"], excl=re.compile(r"\$|value|amount|beginning|opening|issue\s+of|issued\s+during", re.I), all_matches=True):
+    for lab, vals in _find(rows, L["issued"], excl=re.compile(r"\$|value|amount|beginning|opening|issue\s+of|issued\s+during", re.I), all_matches=True, use_cols=False):
         if vals and abs(vals[0]) >= 1e5 and float(vals[0]).is_integer() and len(vals) <= 2:
             return [abs(x) for x in vals] + [None] * (2 - len(vals))
     return None
@@ -214,7 +277,7 @@ def _canon(lab: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
-PBT_C = re.compile(r"\b(net\s+)?(profit|loss|earnings)\s+before\s+(income\s+)?tax")
+PBT_C = re.compile(r"\b(profit|loss|earnings|result)\b(?:\s+[a-z&,'-]+){0,5}?\s+before\s+(income\s+)?tax")
 NPAT_C = re.compile(r"^(net\s+)?(profit|loss)\b(?!.*\bbefore\b)(?!.*per\s+share)(?!.*comprehensive)")
 SUMMARY_PAGE = re.compile(r"appendix\s+4[de]|results\s+for\s+announcement|up\s*/\s*\(?down\)?|change\s*%|%\s*change|"
                           r"statutory\s+ebitda|underlying\s+ebitda", re.I)
@@ -360,7 +423,7 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
                 if v:
                     put("npat", v, mult, p)
                     break
-        h = _find(rows, L["eps"], start_only=False, excl=re.compile(r"diluted\s+(earnings|eps)(?!.*basic)", re.I))
+        h = _find(rows, L["eps"], start_only=False, excl=re.compile(r"^(?!.*basic).*diluted", re.I))
         if h:
             metrics.setdefault("eps_raw", h[0][1] + [None] * (2 - len(h[0][1])))
             pages.setdefault("eps_raw", p + 1)
@@ -421,7 +484,7 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
             lab = _label_text(row)
             if not L["wa_shares"].search(lab) or re.search(r"diluted(?!.*basic)", lab, re.I):
                 continue
-            vals = _values(rows, i)
+            vals = _values(rows, i, use_cols=False)
             if not vals:
                 continue
             # units only from this line and the few header rows right above it (a page-wide "$'000"
@@ -470,6 +533,8 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
         r = issued[0] / metrics["shares_wa"][0]
         if 0.6 <= r <= 2.5:
             metrics["shares"] = issued + [None] * (2 - len(issued))
+    elif issued and issued[0] >= 1e5:
+        metrics["shares"] = issued + [None] * (2 - len(issued))  # nothing to check against; outlier filter still applies
     if "shares" not in metrics and metrics.get("shares_wa"):
         metrics["shares"] = list(metrics["shares_wa"])
         pages["shares"] = pages.get("wa_shares") or pages.get("eps_raw")
