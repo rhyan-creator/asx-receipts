@@ -51,29 +51,40 @@ def _to_number(tok: str) -> float | None:
     return -v if neg else v
 
 
-def _rotated_boxes(page) -> list[tuple]:
-    """Bounding boxes of text that isn't horizontal, e.g. the ASX's 'For personal use only' margin stamp."""
-    boxes = []
+def _rotated_lines(page) -> list[tuple]:
+    """Rotated text such as the ASX's 'For personal use only' margin stamp: (bbox, set of its words)."""
+    out = []
     try:
         for b in page.get_text("dict").get("blocks", []):
             for ln in b.get("lines", []):
                 dx, dy = ln.get("dir", (1, 0))
                 if abs(dy) > 0.2:
-                    boxes.append(tuple(ln["bbox"]))
+                    text = " ".join(sp.get("text", "") for sp in ln.get("spans", []))
+                    out.append((tuple(ln["bbox"]), {t.lower() for t in text.split()}))
     except Exception:  # noqa: BLE001
         pass
-    return boxes
+    return out
+
+
+def _is_stamp_word(w, rot) -> bool:
+    """A word belongs to rotated text only if it is one of that text's words AND it spans the full
+    thickness of the rotated line (rotated words are as wide as the line is tall). Horizontal words
+    that merely sit inside the stamp's box, e.g. Calix's 'Loss' at the left margin, are kept."""
+    x0, y0, x1, y1, txt = w[0], w[1], w[2], w[3], w[4].lower()
+    for (bx0, by0, bx1, by1), words in rot:
+        if txt not in words:
+            continue
+        if x0 >= bx0 - 2 and x1 <= bx1 + 2 and y0 >= by0 - 2 and y1 <= by1 + 2 and (x1 - x0) >= 0.7 * (bx1 - bx0):
+            return True
+    return False
 
 
 def _rows(page) -> list[list[tuple]]:
-    """Group words into visual rows by vertical position (ignoring rotated text)."""
+    """Group words into visual rows by vertical position (ignoring rotated text such as margin stamps)."""
     words = page.get_text("words")
-    rot = _rotated_boxes(page)
+    rot = _rotated_lines(page)
     if rot:
-        def inside(w):
-            cx, cy = (w[0] + w[2]) / 2, (w[1] + w[3]) / 2
-            return any(b[0] - 1 <= cx <= b[2] + 1 and b[1] - 1 <= cy <= b[3] + 1 for b in rot)
-        words = [w for w in words if not inside(w)]
+        words = [w for w in words if not _is_stamp_word(w, rot)]
     words.sort(key=lambda w: ((w[1] + w[3]) / 2, w[0]))
     rows, cur, cur_y = [], [], None
     for w in words:
