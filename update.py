@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "state"
 SITE = ROOT / "docs" / "data"
 YEARS = 10
-FIN_V = 6  # bump to make the robot re-read reports after a parser change
+FIN_V = 7  # bump to make the robot re-read reports after a parser change
 FLOW = ["revenue", "gross", "ebitda", "ebit", "npat", "da"]
 STOCK = ["cash", "debt", "leases", "equity", "shares", "shares_wa"]
 COMPANY_CSV = "https://www.asx.com.au/asx/research/ASXListedCompanies.csv"
@@ -175,6 +175,7 @@ def refresh_ticker(t: str, workers: int = 4, use_yahoo: bool = True, log=print) 
                 nfin = _store_fin(s, ids, doc, fin) if fin else 0
                 rec["f"] = nfin
                 rec["miss"] = (fin or {}).get("missing", []) if doc["kind"] != "q" else []
+                rec["rej"] = (fin or {}).get("rejected", []) if doc["kind"] != "q" else []
                 if point is None:
                     rec["s"] = "parsed" if nfin else "no_data"
                     rec["n"] = f"no receipts line; {nfin} financial figures" if nfin else "nothing found"
@@ -364,7 +365,7 @@ def build_site_json(s: dict, meta: dict, overrides: list[dict]) -> dict:
         out["currencies"] = sorted({p.get("currency") or "AUD" for p in s.get("fin", [])}) or ["AUD"]
     out["docs"] = sorted(
         [{"id": i, "date": d["r"], "title": d["t"], "status": d["s"], "note": d.get("n", ""), "fin": d.get("f", 0),
-          "miss": d.get("miss", []), "err": d.get("err", "")}
+          "miss": d.get("miss", []), "rej": d.get("rej", []), "err": d.get("err", "")}
          for i, d in s["docs"].items()],
         key=lambda d: d["date"], reverse=True)
     return out

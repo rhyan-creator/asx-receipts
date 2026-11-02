@@ -15,7 +15,7 @@ from datetime import datetime
 
 import pymupdf
 
-from .parse import (NUM, _merge_tokens, _norm, _period_end_from_text, _rows, _snap_to_month_end, _to_number,
+from .parse import (page_text, NUM, _merge_tokens, _norm, _period_end_from_text, _rows, _snap_to_month_end, _to_number,
                     _unit_multiplier, _currency, resolve_period_end)
 
 # ---------------------------------------------------------------- line patterns
@@ -61,21 +61,28 @@ def _label_text(row) -> str:
 
 
 _COL_CACHE: dict[int, list[float] | None] = {}
-COL_HEAD = re.compile(r"^(\$|a\$|us\$)?'?000s?$|^\$$|^\$m$|^20\d\d$|^cents$", re.I)
+COL_HEAD = re.compile(r"^(\$|a\$|us\$)?['\u2019]?000s?$|^\$$|^\$m$|^20\d\d$|^cents$", re.I)
 
 
-def _columns(rows) -> list[float] | None:
-    """Right edges of the value columns, from the header row ("$'000  $'000" or "2026  2025").
+def _columns(rows, i: int = 0) -> list[float] | None:
+    """Right edges of the value columns, from the nearest header row ABOVE row i ("$'000  $'000" or
+    "2026  2025"), so each table on a page (or each half of a two-page spread) uses its own columns.
     Numbers in these statements are right-aligned under their header."""
-    key = id(rows)
+    key = (id(rows), i)
     if key in _COL_CACHE:
         return _COL_CACHE[key]
     cols = None
-    for row in rows[:40]:
-        heads = [w for w in row if COL_HEAD.match(_norm(w[4]).strip())]
+    for j in range(min(i, len(rows) - 1), -1, -1):
+        heads = [w for w in rows[j] if COL_HEAD.match(_norm(w[4]).strip())]
         if len(heads) >= 2:
-            cols = sorted(w[2] for w in heads)
+            cols = sorted(w[2] for w in heads)[-2:]
             break
+    if cols is None:  # no header above this row: fall back to the first header on the page
+        for row in rows[:40]:
+            heads = [w for w in row if COL_HEAD.match(_norm(w[4]).strip())]
+            if len(heads) >= 2:
+                cols = sorted(w[2] for w in heads)[-2:]
+                break
     _COL_CACHE[key] = cols
     return cols
 
@@ -98,15 +105,18 @@ def _by_columns(row, cols) -> list[float] | None:
 def _values(rows, i, use_cols: bool = True) -> list[float]:
     """Numbers to the right of the label on row i (or a continuation row), note column removed.
     Share-count notes use 'Number' columns rather than $'000, so they skip the column matching."""
-    cols = _columns(rows) if use_cols else None
+    cols = _columns(rows, i) if use_cols else None
     if cols:
+        own_nums = [w for w in rows[i] if NUM.match(_norm(w[4]).strip(",")) and not re.search(r"[a-z]", w[4], re.I)]
         for j in range(i, min(i + 3, len(rows))):
-            if j > i and len([w for w in rows[j] if re.search(r"[a-z]", w[4], re.I)]) > 6:
-                break
+            if j > i and (own_nums or len([w for w in rows[j] if re.search(r"[a-z]", w[4], re.I)]) > 6):
+                break  # a row with its own numbers never borrows the next row's
             got = _by_columns(rows[j], cols)
             if got:
                 return got
-        return []
+        if not own_nums:
+            return []
+        # numbers don't line up with the column headers: read them right of the label instead
     row = rows[i]
     alpha = [w for w in row if re.search(r"[a-z]", w[4], re.I)]
     x0 = alpha[-1][2] + 1 if alpha else 0.0
@@ -303,16 +313,86 @@ def _page_score(text: str, kind: str) -> int:
     return s
 
 
+_ROWS_CACHE: dict = {}
+
+
+def _page_rows(doc, p):
+    key = (id(doc), p)
+    if key not in _ROWS_CACHE:
+        _ROWS_CACHE[key] = _rows(doc[p])
+    return _ROWS_CACHE[key]
+
+
+TAX_LINE = re.compile(r"^income\s+tax\s+(expense|benefit)|^tax\s+(expense|benefit)|^income\s+tax\s*$", re.I)
+EPS_LINE = re.compile(r"(earnings|loss|profit)\s+per\s+share|\beps\b", re.I)
+FIN_LINE = re.compile(r"^(finance\s+(costs?|expenses?)|interest\s+(expense|paid|costs?)|borrowing\s+costs|net\s+finance)", re.I)
+
+
+def _line_score(rows, kind: str) -> int:
+    """How much this page looks like the statement itself: count the statement's own lines that have
+    numbers beside them. Running headers, navigation bars and notes that merely mention the statement
+    names score nothing, so they can't win."""
+    have = set()
+    expense_lines = 0
+    for i, row in enumerate(rows):
+        lab = _label_text(row).strip()
+        if not lab or len(lab) > 90:
+            continue
+        has_num = any(NUM.match(_norm(w[4]).strip(",")) and not re.search(r"[a-z]", w[4], re.I) for w in row)
+        if not has_num:
+            continue
+        c = _canon(lab)
+        if kind == "pl":
+            if PBT_C.search(c):
+                have.add("pbt")
+            elif TAX_LINE.match(c):
+                have.add("tax")
+            elif NPAT_C.match(c) or re.match(r"^profit\s+after\s+income\s+tax", c):
+                have.add("npat")
+            elif L["revenue"].match(lab) or L["revenue_total"].match(lab):
+                have.add("rev")
+            elif EPS_LINE.search(c):
+                have.add("eps")
+            elif FIN_LINE.match(c):
+                have.add("fin")
+            elif re.search(r"expenses?$|^cost\s+of|^depreciation|^employee", c):
+                expense_lines += 1
+        else:
+            if L["cash"].match(lab):
+                have.add("cash")
+            elif re.match(r"^total\s+assets", c):
+                have.add("ta")
+            elif re.match(r"^total\s+liabilities", c):
+                have.add("tl")
+            elif re.match(r"^(total\s+equity|net\s+assets|total\s+shareholders)", c):
+                have.add("te")
+            elif re.match(r"^(trade\s+and\s+other\s+(payables|receivables)|borrowings|property,?\s+plant)", c):
+                have.add("other")
+    w = {"pbt": 3, "tax": 2, "npat": 2, "rev": 1, "eps": 1, "fin": 1, "cash": 2, "ta": 2, "tl": 2, "te": 2, "other": 1}
+    score = sum(w[k] for k in have) + (1 if expense_lines >= 3 else 0)
+    return score
+
+
 def _best_pages(doc, kind: str, n: int = 2) -> list[int]:
-    """The statement page(s), plus the page after the best one (statements often run over a page break).
-    Falls back to a looser score when the heading isn't extractable text (e.g. drawn as an image)."""
+    """The statement page(s): ranked by the statement lines actually on the page (see _line_score), with the
+    old heading-based score only as a tie-breaker. Adds the page after the best one, since statements often
+    run over a page break."""
+    need = 6 if kind == "pl" else 6
     scored = []
     for p in range(doc.page_count):
-        txt = doc[p].get_text()
-        scored.append((_page_score(txt, kind), p))
-    good = [x for x in scored if x[0] >= 6] or [x for x in scored if x[0] >= 4 and _structural(doc[x[1]].get_text(), kind)]
-    good.sort(key=lambda x: (-x[0], x[1]))
-    pages = [p for _, p in good[:n]]
+        txt = page_text(doc[p])
+        if kind == "pl" and not re.search(r"before\s+(income\s+)?tax", txt, re.I):
+            continue
+        if kind == "bs" and not re.search(r"total\s+assets|net\s+assets", txt, re.I):
+            continue
+        ls = _line_score(_page_rows(doc, p), kind)
+        both = ls
+        if 3 <= ls < need and p + 1 < doc.page_count:  # statement split over a page break
+            both = _line_score(_page_rows(doc, p) + _page_rows(doc, p + 1), kind)
+        if both >= need:
+            scored.append((both, ls, _page_score(txt, kind), p))
+    scored.sort(key=lambda x: (-x[0], -x[1], -x[2], x[3]))
+    pages = [x[3] for x in scored[:n]]
     if pages and pages[0] + 1 < doc.page_count and pages[0] + 1 not in pages:
         pages.append(pages[0] + 1)
     return pages
@@ -327,9 +407,9 @@ def _structural(text: str, kind: str) -> bool:
 
 
 def _mult(doc, p: int) -> float:
-    m = _unit_multiplier(doc[p].get_text())
+    m = _unit_multiplier(page_text(doc[p]))
     if m == 1.0 and p > 0:
-        m2 = _unit_multiplier(doc[p - 1].get_text()[-1500:])
+        m2 = _unit_multiplier(page_text(doc[p - 1])[-1500:])
         m = m2 if m2 != 1.0 else m
     return m
 
@@ -341,10 +421,14 @@ def parse_report(data: bytes, kind: str, released: str, title: str | None = None
     try:
         return _parse(doc, kind, released, title)
     finally:
+        _ROWS_CACHE.clear()
+        _COL_CACHE.clear()
         doc.close()
 
 
 def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | None:
+    _ROWS_CACHE.clear()  # page rows are cached per report only
+    _COL_CACHE.clear()
     months = 6 if kind == "h" else 12
     metrics: dict[str, list[float]] = {}
     pages: dict[str, int] = {}
@@ -359,13 +443,23 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
         pages[name] = page + 1
 
     # -------- income statement
-    pl_pages = _best_pages(doc, "pl")
+    # the income statement page, plus the next page only if the statement continues onto it
+    # (profit before tax found but not the profit after tax that ends it). Other pages that merely look
+    # similar (segment notes, tax notes) are never read.
+    pl_pages = _best_pages(doc, "pl")[:1]
+    if pl_pages:
+        r0 = _page_rows(doc, pl_pages[0])
+        labs = [_canon(_label_text(r)) for r in r0]
+        has_pbt = any(PBT_C.search(c) for c in labs)
+        has_npat = any(NPAT_C.match(c) for c in labs)
+        if not (has_pbt and has_npat) and pl_pages[0] + 1 < doc.page_count:
+            pl_pages.append(pl_pages[0] + 1)
     ctx_text = ""
     pbt_seen = False  # kept across pages: profit before tax can sit at the bottom of one page, net profit on the next
     for p in pl_pages:
-        rows = _rows(doc[p])
+        rows = _page_rows(doc, p)
         mult = _mult(doc, p)
-        ctx_text = ctx_text or doc[p].get_text()
+        ctx_text = ctx_text or page_text(doc[p])
         # revenue: a 'Total revenue' line if there is one, otherwise every revenue line at the top of
         # the statement added together (other income, gains and interest left out)
         tot = _find(rows, L["revenue_total"])
@@ -431,26 +525,32 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
     # D&A elsewhere: cash flow reconciliation or expenses note
     if "da" not in metrics:
         for p in range(doc.page_count):
-            t = doc[p].get_text()
+            t = page_text(doc[p])
             if not re.search(r"depreciation", t, re.I):
                 continue
-            if not re.search(r"reconciliation|operating\s+activities|expenses|profit\s+before", t, re.I):
+            recon = re.search(r"reconciliation\s+of", t, re.I) and re.search(r"operating\s+activities", t, re.I)
+            if not recon and not re.search(r"\bexpenses\b", t, re.I):
                 continue
-            rows = _rows(doc[p])
+            rows = _page_rows(doc, p)
             mult = _mult(doc, p)
             h = _find(rows, L["da_total"])
             if h:
                 put("da", h[0][1], mult, p, absolute=True)
                 break
-            parts = _find(rows, L["da_part"], all_matches=True)
-            if parts and len(parts) <= 4:
-                tot = [sum(abs(v[k]) for _, v in parts if len(v) > k) for k in range(2)]
-                put("da", tot, mult, p, absolute=True)
-                break
+            if recon:  # separate depreciation / amortisation lines only on the cash-flow reconciliation
+                parts = _find(rows, L["da_part"], all_matches=True)
+                if parts and len(parts) <= 4:
+                    tot = [sum(abs(v[k]) for _, v in parts if len(v) > k) for k in range(2)]
+                    put("da", tot, mult, p, absolute=True)
+                    break
 
     # -------- balance sheet
-    for p in _best_pages(doc, "bs", n=3):
-        rows = _rows(doc[p])
+    bs_pages = _best_pages(doc, "bs")[:1]
+    if bs_pages and not any(re.match(r"^(total\s+equity|net\s+assets)", _canon(_label_text(r)))
+                            for r in _page_rows(doc, bs_pages[0])) and bs_pages[0] + 1 < doc.page_count:
+        bs_pages.append(bs_pages[0] + 1)  # balance sheet continues onto the next page
+    for p in bs_pages:
+        rows = _page_rows(doc, p)
         mult = _mult(doc, p)
         h = _find(rows, L["cash"])
         if h:
@@ -470,13 +570,13 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
         h = _find(rows, L["equity"])
         if h:
             put("equity", h[0][1], mult, p)
-        if "cash" in metrics:
+        if "cash" in metrics and "equity" in metrics:
             break
 
     # -------- shares (weighted average from EPS note; issued from capital note)
     wa = None
     for p in range(doc.page_count):
-        t = doc[p].get_text()
+        t = page_text(doc[p])
         if not re.search(r"weighted\s+average\s+number", t, re.I):
             continue
         rows = _rows(doc[p])
@@ -502,7 +602,7 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
             break
     issued = None
     for p in range(doc.page_count):
-        t = doc[p].get_text()
+        t = page_text(doc[p])
         if not re.search(r"issued\s+capital|contributed\s+equity|share\s+capital", t, re.I):
             continue
         if not re.search(r"number|no\.|shares", t, re.I):
@@ -540,6 +640,32 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
         pages["shares"] = pages.get("wa_shares") or pages.get("eps_raw")
     metrics.pop("eps_raw", None)
 
+    # -------- sanity checks: a figure that breaks basic accounting relationships is a misread, so drop it
+    rejected = []
+
+    def col0(name, k):
+        v = metrics.get(name)
+        return v[k] if v and len(v) > k and v[k] is not None else None
+
+    for k in range(2):
+        rev, pbt, npat, da = col0("revenue", k), col0("pbt", k), col0("npat", k), col0("da", k)
+        small = 0.02 * abs(rev or 0) + 1e5
+        if pbt is not None and npat is not None:
+            lo, hi = (pbt - 0.6 * abs(pbt) - small, pbt + 0.5 * abs(pbt) + small)
+            if not (lo <= npat <= hi):  # tax can't explain the gap between profit before and after tax
+                metrics["npat"][k] = None
+                rejected.append("npat")
+        if da is not None and rev and rev > 1e6 and da > 1.5 * rev:
+            metrics["da"][k] = None
+            rejected.append("da")
+        g = col0("gross", k)
+        if g is not None and rev and g > rev * 1.001:
+            metrics["gross"][k] = None
+            rejected.append("gross")
+    for name in list(metrics):
+        if all(x is None for x in metrics[name][:2]):
+            metrics.pop(name)
+
     # -------- derived EBIT / EBITDA (current and prior)
     def col(name, k):
         v = metrics.get(name)
@@ -565,11 +691,11 @@ def _parse(doc, kind: str, released: str, title: str | None = None) -> dict | No
     # -------- period end
     kw = (r"half[\s-]*year\s+ended|six\s+months\s+ended|period\s+ended|half[\s-]*year\s+ending"
           if kind == "h" else r"year\s+ended|financial\s+year\s+ended|period\s+ended|year\s+ending")
-    text0 = (doc[pl_pages[0]].get_text() if pl_pages else "") + "\n" + \
-        "\n".join(doc[q].get_text() for q in range(min(4, doc.page_count)))
+    text0 = (page_text(doc[pl_pages[0]]) if pl_pages else "") + "\n" + \
+        "\n".join(page_text(doc[q]) for q in range(min(4, doc.page_count)))
     end = resolve_period_end(_period_end_from_text(text0, kw), kind, released, title)
     missing = [m for m in ("revenue", "npat", "ebit", "cash", "shares") if m not in metrics]
-    out = {"missing": missing, "period_end": _snap_to_month_end(end).isoformat(), "months": months,
+    out = {"missing": missing, "rejected": sorted(set(rejected)), "period_end": _snap_to_month_end(end).isoformat(), "months": months,
            "currency": _currency(ctx_text[:3000]),
            "metrics": {k: [None if x is None else float(x) for x in v[:2]] for k, v in metrics.items()},
            "pages": pages}
@@ -584,7 +710,7 @@ def quarterly_cash(data: bytes) -> float | None:
     doc = pymupdf.open(stream=data, filetype="pdf")
     try:
         for p in range(doc.page_count - 1, -1, -1):
-            t = doc[p].get_text()
+            t = page_text(doc[p])
             if not CASH_4C.search(_norm(t).replace("\n", " ")):
                 continue
             rows = _rows(doc[p])

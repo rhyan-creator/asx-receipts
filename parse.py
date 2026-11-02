@@ -79,13 +79,113 @@ def _is_stamp_word(w, rot) -> bool:
     return False
 
 
-def _rows(page) -> list[list[tuple]]:
-    """Group words into visual rows by vertical position (ignoring rotated text such as margin stamps)."""
-    words = page.get_text("words")
-    rot = _rotated_lines(page)
-    if rot:
-        words = [w for w in words if not _is_stamp_word(w, rot)]
-    words.sort(key=lambda w: ((w[1] + w[3]) / 2, w[0]))
+# ---------------------------------------------------------------- broken font encodings
+# Some PDFs (e.g. LGI's FY24 report) embed fonts whose text codes are shifted: every character is stored
+# 29 places lower than it should be ("Receipts" is stored as "5HFHLSWV", a space as \x03). The page looks
+# fine because the shapes are drawn correctly, but the text reads as gibberish. We detect and undo it.
+SHIFT = 29
+_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+VOCAB = set("""revenue receipts profit loss net income tax expense expenses total assets liabilities cash equity borrowings
+lease leases depreciation amortisation amortization finance costs cost before after for the year earnings per share shares basic
+diluted notes note current non-current and of from customers payments suppliers employees operating activities investing financing
+interest paid received other comprehensive statement financial position flows changes balance issued capital ordinary number
+reserves retained gross sales goods sold benefits property plant equipment intangible trade receivables payables provisions
+deferred contracts with certificates environmental attributable members owners period half-year consolidated""".split())
+
+
+# ligatures and punctuation that the same broken fonts store outside the shifted range
+LIGS = {"\u00bf": "fi", "\u00c0": "fl", "\u1088": "ffi", "\u1087": "ff", "\u00b6": "'", "\u00b1": "-",
+        "\u00b3": '"', "\u00b4": '"', "\u00b5": "'"}
+
+
+def _unshift(t: str) -> str:
+    out = []
+    for ch in t:
+        o = ord(ch)
+        if 3 <= o <= 97:
+            out.append(chr(o + SHIFT))
+        else:
+            out.append(LIGS.get(ch, ch))
+    return "".join(out)
+
+
+def _span_is_shifted(t: str) -> bool:
+    if not t.strip():
+        return False
+    if _CTRL.search(t):
+        return True
+    if any(not (3 <= ord(c) <= 97 or c in LIGS) for c in t if not c.isspace()):
+        return False
+    dec = re.findall(r"[a-z\-]+", _unshift(t).lower())
+    raw = re.findall(r"[a-z\-]+", t.lower())
+    return bool(dec) and sum(w in VOCAB for w in dec) > sum(w in VOCAB for w in raw)
+
+
+def _has_shifted(page) -> bool:
+    return bool(_CTRL.search(page.get_text()))
+
+
+_TEXT_CACHE: dict = {}
+
+
+def page_text(page) -> str:
+    """page.get_text(), with shifted-font text decoded."""
+    if not _has_shifted(page):
+        return page.get_text()
+    parts = []
+    for b in page.get_text("dict").get("blocks", []):
+        for ln in b.get("lines", []):
+            parts.append("".join(_unshift(sp["text"]) if _span_is_shifted(sp["text"]) else sp["text"] for sp in ln["spans"]))
+    return "\n".join(parts)
+
+
+def _decoded_words(page) -> list[tuple]:
+    """Words rebuilt character by character, decoding shifted spans."""
+    words = []
+    for bi, b in enumerate(page.get_text("rawdict").get("blocks", [])):
+        for li, ln in enumerate(b.get("lines", [])):
+            for sp in ln.get("spans", []):
+                chars = sp.get("chars", [])
+                raw = "".join(c["c"] for c in chars)
+                shifted = _span_is_shifted(raw)
+                cur, box = [], None
+                for c in chars:
+                    ch = _unshift(c["c"]) if shifted else c["c"]
+                    if ch.isspace():
+                        if cur:
+                            words.append((*box, "".join(cur), bi, li, len(words)))
+                        cur, box = [], None
+                        continue
+                    x0, y0, x1, y1 = c["bbox"]
+                    box = [x0, y0, x1, y1] if box is None else [min(box[0], x0), min(box[1], y0), max(box[2], x1), max(box[3], y1)]
+                    cur.append(ch)
+                if cur:
+                    words.append((*box, "".join(cur), bi, li, len(words)))
+    return words
+
+
+# ---------------------------------------------------------------- page layout
+def _panels(words, page) -> list[list[tuple]]:
+    """Split a two-page spread (one wide PDF page holding two report pages side by side, like LGI's FY23
+    report) at its gutter, so rows from the left and right pages are never merged."""
+    W, H = page.rect.width, page.rect.height
+    if W < 1.15 * H or len(words) < 40:
+        return [words]
+    lo, hi = 0.35 * W, 0.65 * W
+    covered = sorted((w[0], w[2]) for w in words if w[2] > lo and w[0] < hi)
+    best, x = None, lo
+    for a, b in covered + [(hi, hi)]:
+        if a > x and (best is None or a - x > best[1] - best[0]):
+            best = (x, a)
+        x = max(x, b)
+    cut = (best[0] + best[1]) / 2 if best and best[1] - best[0] >= 6 else W / 2
+    left = [w for w in words if (w[0] + w[2]) / 2 < cut]
+    right = [w for w in words if (w[0] + w[2]) / 2 >= cut]
+    return [left, right] if len(left) >= 15 and len(right) >= 15 else [words]
+
+
+def _group(words) -> list[list[tuple]]:
+    words = sorted(words, key=lambda w: ((w[1] + w[3]) / 2, w[0]))
     rows, cur, cur_y = [], [], None
     for w in words:
         y = (w[1] + w[3]) / 2
@@ -97,6 +197,19 @@ def _rows(page) -> list[list[tuple]]:
             cur, cur_y = [w], y
     if cur:
         rows.append(sorted(cur, key=lambda w: w[0]))
+    return rows
+
+
+def _rows(page) -> list[list[tuple]]:
+    """Words grouped into visual rows: margin stamps removed, shifted fonts decoded, and the two halves of
+    a side-by-side spread read one after the other rather than merged."""
+    words = _decoded_words(page) if _has_shifted(page) else page.get_text("words")
+    rot = _rotated_lines(page)
+    if rot:
+        words = [w for w in words if not _is_stamp_word(w, rot)]
+    rows = []
+    for panel in _panels(words, page):
+        rows.extend(_group(panel))
     return rows
 
 
@@ -278,14 +391,14 @@ def _parse_quarterly(doc, released: str) -> dict | None:
     # Appendix 4C/5B usually sits at the back of an activities report
     pages = list(range(doc.page_count))
     marker = re.compile(r"appendix\s+(4c|5b)|quarterly cash\s*flow report|consolidated statement of cash flows", re.I)
-    ordered = [p for p in pages if marker.search(doc[p].get_text())] + pages
+    ordered = [p for p in pages if marker.search(page_text(doc[p]))] + pages
     seen = set()
     for p in ordered:
         if p in seen:
             continue
         seen.add(p)
         page = doc[p]
-        text = page.get_text()
+        text = page_text(page)
         if not re.search(r"1\.1|receipts", text, re.I):
             continue
         hit = _find_receipts(page)
@@ -293,7 +406,7 @@ def _parse_quarterly(doc, released: str) -> dict | None:
             continue
         value, label, _ = hit  # 4C second column is year-to-date, not a comparative
         # header (quarter end, units) can be on this page or the first appendix page
-        context = text + "\n" + "\n".join(doc[q].get_text() for q in range(max(0, p - 2), p))
+        context = text + "\n" + "\n".join(page_text(doc[q]) for q in range(max(0, p - 2), p))
         end = _period_end_from_text(context, r"quarter\s+ended|quarter\s+ending|for\s+the\s+quarter\s+ended")
         if not end or abs((datetime.strptime(released, "%Y-%m-%d").date() - end).days) > 200:
             end = _quarter_end_before(released)
@@ -312,7 +425,7 @@ def _parse_quarterly(doc, released: str) -> dict | None:
 def _parse_report(doc, kind: str, released: str, title: str | None = None) -> dict | None:
     scored = []
     for p in range(doc.page_count):
-        text = doc[p].get_text()
+        text = page_text(doc[p])
         if not LABEL.search(_norm(text).replace("\n", " ")):
             continue
         score = 0
@@ -334,8 +447,8 @@ def _parse_report(doc, kind: str, released: str, title: str | None = None) -> di
         if not hit:
             continue
         value, label, prior = hit
-        text = page.get_text()
-        context = text + "\n" + (doc[p - 1].get_text() if p > 0 else "")
+        text = page_text(page)
+        context = text + "\n" + (page_text(doc[p - 1]) if p > 0 else "")
         mult = _unit_multiplier(text)
         if mult == 1.0:
             mult = _unit_multiplier(context)
@@ -343,7 +456,7 @@ def _parse_report(doc, kind: str, released: str, title: str | None = None) -> di
         kw = (r"half[\s-]*year\s+ended|six\s+months\s+ended|period\s+ended|half[\s-]*year\s+ending"
               if kind == "h" else r"year\s+ended|financial\s+year\s+ended|period\s+ended|year\s+ending")
         end = _period_end_from_text(text, kw) or _period_end_from_text(
-            "\n".join(doc[q].get_text() for q in range(min(4, doc.page_count))), kw)
+            "\n".join(page_text(doc[q]) for q in range(min(4, doc.page_count))), kw)
         end = resolve_period_end(end, kind, released, title)
         return {
             "period_end": _snap_to_month_end(end).isoformat(),
